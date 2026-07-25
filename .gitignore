@@ -1,0 +1,38 @@
+# Build directory
+build/
+bin/
+lib/
+out/
+
+# CMake / Ninja generated files
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+Testing/
+Makefile
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+.ninja_deps
+.ninja_log
+build.ninja
+
+# Compiled binaries and objects
+*.o
+*.obj
+*.so
+*.a
+*.dylib
+*.exe
+
+# Antigravity IDE / Editor metadata
+.gemini/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+Thumbs.db
