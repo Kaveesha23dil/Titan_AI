@@ -4,7 +4,7 @@
 #include <iostream>
 #include <string>
 
-#include "llm/ollama_client.hpp"
+#include "agent/agent.hpp"
 
 class InputReaderThread : public QThread {
     Q_OBJECT
@@ -56,7 +56,7 @@ int main(int argc, char *argv[])
     std::cout << "------------------------------------\n\n";
     std::cout << "Type 'exit' or 'quit' to close TitanAI.\n\n";
 
-    OllamaClient client;
+    Agent agent;
     InputReaderThread inputThread;
     bool isWaitingForResponse = false;
     QString pendingInput;
@@ -82,7 +82,7 @@ int main(int argc, char *argv[])
 
         isWaitingForResponse = true;
         std::cout << "\nTitanAI:\n" << std::flush;
-        client.sendPrompt(inputStr);
+        agent.sendMessage(inputStr);
     };
 
     QObject::connect(&inputThread, &InputReaderThread::lineRead, &app, [&](const QString &line) {
@@ -116,12 +116,12 @@ int main(int argc, char *argv[])
         }
     };
 
-    QObject::connect(&client, &OllamaClient::responseReceived, &app, [&](const QString &response) {
+    QObject::connect(&agent, &Agent::responseReceived, &app, [&](const QString &response) {
         std::cout << response.toStdString() << "\n\n" << std::flush;
         onResponseComplete();
     }, Qt::QueuedConnection);
 
-    QObject::connect(&client, &OllamaClient::errorOccurred, &app, [&](const QString &error) {
+    QObject::connect(&agent, &Agent::errorOccurred, &app, [&](const QString &error) {
         std::cerr << "Error: " << error.toStdString() << "\n\n" << std::flush;
         onResponseComplete();
     }, Qt::QueuedConnection);
