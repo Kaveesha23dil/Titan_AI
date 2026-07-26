@@ -25,6 +25,7 @@ add_executable(TitanAI
     src/main.cpp
     src/agent/agent.cpp
     src/llm/ollama_client.cpp
+    src/tools/system_info.cpp
 )
 
 # Enable compiler warnings

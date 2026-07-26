@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QString>
 #include "llm/ollama_client.hpp"
+#include "tools/system_info.hpp"
 
 class Agent : public QObject {
     Q_OBJECT
@@ -19,7 +20,10 @@ signals:
     void errorOccurred(const QString &error);
 
 private:
+    bool handleSystemInfoQuery(const QString &message);
+
     OllamaClient m_ollamaClient;
+    SystemInfoTool m_systemInfoTool;
 };
 
 #endif // TITANAI_AGENT_HPP
