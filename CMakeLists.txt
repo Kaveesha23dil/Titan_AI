@@ -23,6 +23,7 @@ find_package(Qt6 REQUIRED COMPONENTS Core Network)
 # Add target executable
 add_executable(TitanAI
     src/main.cpp
+    src/agent/agent.cpp
     src/llm/ollama_client.cpp
 )
 
