@@ -4,8 +4,8 @@
 #include <QObject>
 #include <QString>
 #include <QUrl>
+#include <QJsonArray>
 #include <QNetworkAccessManager>
-#include <QNetworkReply>
 
 class OllamaClient : public QObject {
     Q_OBJECT
@@ -15,6 +15,8 @@ public:
     ~OllamaClient() override = default;
 
     void sendPrompt(const QString &prompt, const QString &model = QStringLiteral("gemma3:4b"));
+    void clearHistory();
+    [[nodiscard]] const QJsonArray& history() const;
 
 signals:
     void responseReceived(const QString &response);
@@ -23,6 +25,7 @@ signals:
 private:
     QNetworkAccessManager m_networkManager;
     QUrl m_endpointUrl{QStringLiteral("http://127.0.0.1:11434/api/chat")};
+    QJsonArray m_history;
 };
 
 #endif // TITANAI_OLLAMA_CLIENT_HPP
