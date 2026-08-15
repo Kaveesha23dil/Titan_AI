@@ -14,6 +14,7 @@ MainWindow::MainWindow(QWidget *parent)
     , m_chatDisplay(new QTextBrowser(this))
     , m_input(new QLineEdit(this))
     , m_sendButton(new QPushButton(QStringLiteral("Send"), this))
+    , m_statusLabel(new QLabel(QStringLiteral("Initializing local AI model..."), this))
 {
     setWindowTitle(QStringLiteral("TitanAI"));
     resize(680, 520);
@@ -28,6 +29,9 @@ MainWindow::MainWindow(QWidget *parent)
     headerFont.setPointSize(headerFont.pointSize() + 4);
     header->setFont(headerFont);
 
+    m_statusLabel->setAlignment(Qt::AlignCenter);
+    m_statusLabel->setStyleSheet(QStringLiteral("color: #666; font-size: 11px;"));
+
     m_input->setPlaceholderText(QStringLiteral("Type a message... (Enter to send)"));
     m_input->setMinimumHeight(32);
 
@@ -38,6 +42,7 @@ MainWindow::MainWindow(QWidget *parent)
     auto *central = new QWidget(this);
     auto *layout = new QVBoxLayout(central);
     layout->addWidget(header);
+    layout->addWidget(m_statusLabel);
     layout->addWidget(m_chatDisplay, 1);
     layout->addLayout(inputRow);
     setCentralWidget(central);
@@ -46,17 +51,28 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_input, &QLineEdit::returnPressed, this, &MainWindow::onSendClicked);
     connect(&m_agent, &Agent::responseReceived, this, &MainWindow::onResponseReceived);
     connect(&m_agent, &Agent::errorOccurred, this, &MainWindow::onErrorOccurred);
+    connect(&m_agent, &Agent::modelStatusChanged, this,
+            [this](OllamaManager::Status, const QString &message) {
+                m_statusLabel->setText(message);
+            });
+    connect(&m_agent, &Agent::modelReady, this, &MainWindow::onModelReady);
+    connect(&m_agent, &Agent::modelError, this, &MainWindow::onModelError);
 
     appendMessage(QStringLiteral("TitanAI"),
-                  QStringLiteral("Welcome! Type a message below, or ask about your system "
-                                 "(e.g. \"show system info\", \"how much RAM do I have?\")."),
+                  QStringLiteral("Welcome! Loading the local AI model. You can start chatting once "
+                                 "it is ready."),
                   QStringLiteral("#4a90d9"));
 
-    m_input->setFocus();
+    setInputEnabled(false);
+    m_agent.initializeModel(Agent::kDefaultModel);
 }
 
 void MainWindow::onSendClicked()
 {
+    if (!m_modelReady) {
+        return;
+    }
+
     QString text = m_input->text().trimmed();
     if (text.isEmpty()) {
         return;
@@ -66,6 +82,26 @@ void MainWindow::onSendClicked()
     appendMessage(QStringLiteral("You"), text, QStringLiteral("#2c3e50"));
     setInputEnabled(false);
     m_agent.sendMessage(text);
+}
+
+void MainWindow::onModelReady(const QString &model)
+{
+    m_modelReady = true;
+    m_statusLabel->setText(QStringLiteral("Model ready: %1").arg(model));
+    appendMessage(QStringLiteral("TitanAI"),
+                  QStringLiteral("Local AI model '%1' is ready. Ask me anything about your "
+                                 "system, or just chat!")
+                      .arg(model),
+                  QStringLiteral("#4a90d9"));
+    setInputEnabled(true);
+}
+
+void MainWindow::onModelError(const QString &error)
+{
+    m_modelReady = false;
+    m_statusLabel->setText(QStringLiteral("Model unavailable"));
+    appendMessage(QStringLiteral("Error"), error, QStringLiteral("#c0392b"));
+    setInputEnabled(false);
 }
 
 void MainWindow::onResponseReceived(const QString &response)

@@ -10,6 +10,18 @@ OllamaClient::OllamaClient(QObject *parent)
 {
 }
 
+void OllamaClient::setModel(const QString &model)
+{
+    if (!model.trimmed().isEmpty()) {
+        m_model = model.trimmed();
+    }
+}
+
+const QString& OllamaClient::model() const
+{
+    return m_model;
+}
+
 void OllamaClient::clearHistory()
 {
     m_history = QJsonArray();
@@ -20,7 +32,7 @@ const QJsonArray& OllamaClient::history() const
     return m_history;
 }
 
-void OllamaClient::sendPrompt(const QString &prompt, const QString &model)
+void OllamaClient::sendPrompt(const QString &prompt)
 {
     QString trimmedPrompt = prompt.trimmed();
     if (trimmedPrompt.isEmpty()) {
@@ -37,7 +49,7 @@ void OllamaClient::sendPrompt(const QString &prompt, const QString &model)
     request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
 
     QJsonObject payloadObj;
-    payloadObj[QStringLiteral("model")] = model;
+    payloadObj[QStringLiteral("model")] = m_model;
     payloadObj[QStringLiteral("messages")] = m_history;
     payloadObj[QStringLiteral("stream")] = false;
 
