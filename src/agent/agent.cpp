@@ -8,6 +8,21 @@ Agent::Agent(QObject *parent)
 {
     connect(&m_ollamaClient, &OllamaClient::responseReceived, this, &Agent::responseReceived);
     connect(&m_ollamaClient, &OllamaClient::errorOccurred, this, &Agent::errorOccurred);
+
+    connect(&m_ollamaManager, &OllamaManager::statusChanged, this, &Agent::modelStatusChanged);
+    connect(&m_ollamaManager, &OllamaManager::modelReady, this, &Agent::onModelReady);
+    connect(&m_ollamaManager, &OllamaManager::modelError, this, &Agent::modelError);
+}
+
+void Agent::initializeModel(const QString &model)
+{
+    m_ollamaManager.ensureModelReady(model);
+}
+
+void Agent::onModelReady(const QString &model)
+{
+    m_ollamaClient.setModel(model);
+    emit modelReady(model);
 }
 
 void Agent::sendMessage(const QString &message)

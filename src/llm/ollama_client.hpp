@@ -14,7 +14,9 @@ public:
     explicit OllamaClient(QObject *parent = nullptr);
     ~OllamaClient() override = default;
 
-    void sendPrompt(const QString &prompt, const QString &model = QStringLiteral("gemma3:4b"));
+    void sendPrompt(const QString &prompt);
+    void setModel(const QString &model);
+    [[nodiscard]] const QString& model() const;
     void clearHistory();
     [[nodiscard]] const QJsonArray& history() const;
 
@@ -25,6 +27,7 @@ signals:
 private:
     QNetworkAccessManager m_networkManager;
     QUrl m_endpointUrl{QStringLiteral("http://127.0.0.1:11434/api/chat")};
+    QString m_model{QStringLiteral("gemma3:4b")};
     QJsonArray m_history;
 };
 
