@@ -4,6 +4,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QScrollBar>
 #include <QTextBrowser>
@@ -52,6 +53,8 @@ MainWindow::MainWindow(QWidget *parent)
     connect(&m_agent, &Agent::responseChunkReceived, this, &MainWindow::onResponseChunk);
     connect(&m_agent, &Agent::responseReceived, this, &MainWindow::onResponseReceived);
     connect(&m_agent, &Agent::errorOccurred, this, &MainWindow::onErrorOccurred);
+    connect(&m_agent, &Agent::installRequested, this, &MainWindow::onInstallRequested);
+    connect(&m_agent, &Agent::toolOutputReceived, this, &MainWindow::onToolOutput);
     connect(&m_agent, &Agent::modelStatusChanged, this,
             [this](OllamaManager::Status, const QString &message) {
                 m_statusLabel->setText(message);
@@ -82,8 +85,6 @@ void MainWindow::onSendClicked()
     m_input->clear();
     appendMessage(QStringLiteral("You"), text, QStringLiteral("#2c3e50"));
     setInputEnabled(false);
-    m_streamActive = true;
-    m_streamBlockStarted = false;
     m_agent.sendMessage(text);
 }
 
@@ -109,6 +110,8 @@ void MainWindow::onModelError(const QString &error)
 
 void MainWindow::onResponseChunk(const QString &chunk)
 {
+    m_streamActive = true;
+
     if (!m_streamBlockStarted) {
         startStreamingBlock();
     }
@@ -139,6 +142,34 @@ void MainWindow::onErrorOccurred(const QString &error)
     setInputEnabled(true);
 }
 
+void MainWindow::onInstallRequested(const QStringList &packages)
+{
+    QMessageBox::StandardButton answer =
+        QMessageBox::question(this,
+                              QStringLiteral("Confirm Installation"),
+                              QStringLiteral("Install the following package(s) on your system?\n\n"
+                                             "  %1\n\n"
+                                             "This runs pacman with administrator privileges.")
+                                  .arg(packages.join(QStringLiteral(", "))),
+                              QMessageBox::Yes | QMessageBox::No,
+                              QMessageBox::No);
+
+    if (answer != QMessageBox::Yes) {
+        setInputEnabled(true);
+        return;
+    }
+
+    appendMessage(QStringLiteral("TitanAI"),
+                  QStringLiteral("Installing %1...").arg(packages.join(QStringLiteral(", "))),
+                  QStringLiteral("#4a90d9"));
+    m_agent.performInstall(packages);
+}
+
+void MainWindow::onToolOutput(const QString &line)
+{
+    appendPlainLine(line, QStringLiteral("#6b7280"));
+}
+
 void MainWindow::startStreamingBlock()
 {
     m_chatDisplay->append(QStringLiteral("<b style=\"color:#4a90d9\">TitanAI:</b> "));
@@ -162,5 +193,12 @@ void MainWindow::appendMessage(const QString &sender, const QString &text, const
 {
     m_chatDisplay->append(
         QStringLiteral("<b style=\"color:%1\">%2:</b> %3").arg(color, sender, text.toHtmlEscaped()));
+    m_chatDisplay->verticalScrollBar()->setValue(m_chatDisplay->verticalScrollBar()->maximum());
+}
+
+void MainWindow::appendPlainLine(const QString &text, const QString &color)
+{
+    m_chatDisplay->append(
+        QStringLiteral("<span style=\"color:%1\">%2</span>").arg(color, text.toHtmlEscaped()));
     m_chatDisplay->verticalScrollBar()->setValue(m_chatDisplay->verticalScrollBar()->maximum());
 }

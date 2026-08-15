@@ -24,10 +24,13 @@ private slots:
     void onErrorOccurred(const QString &error);
     void onModelReady(const QString &model);
     void onModelError(const QString &error);
+    void onInstallRequested(const QStringList &packages);
+    void onToolOutput(const QString &line);
 
 private:
     void setInputEnabled(bool enabled);
     void appendMessage(const QString &sender, const QString &text, const QString &color);
+    void appendPlainLine(const QString &text, const QString &color);
     void startStreamingBlock();
 
     Agent m_agent;
