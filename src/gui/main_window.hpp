@@ -19,6 +19,7 @@ public:
 
 private slots:
     void onSendClicked();
+    void onResponseChunk(const QString &chunk);
     void onResponseReceived(const QString &response);
     void onErrorOccurred(const QString &error);
     void onModelReady(const QString &model);
@@ -27,6 +28,7 @@ private slots:
 private:
     void setInputEnabled(bool enabled);
     void appendMessage(const QString &sender, const QString &text, const QString &color);
+    void startStreamingBlock();
 
     Agent m_agent;
     QTextBrowser *m_chatDisplay;
@@ -34,6 +36,8 @@ private:
     QPushButton *m_sendButton;
     QLabel *m_statusLabel;
     bool m_modelReady{false};
+    bool m_streamActive{false};
+    bool m_streamBlockStarted{false};
 };
 
 #endif // TITANAI_MAIN_WINDOW_HPP

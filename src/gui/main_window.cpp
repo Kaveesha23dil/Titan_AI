@@ -49,6 +49,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     connect(m_sendButton, &QPushButton::clicked, this, &MainWindow::onSendClicked);
     connect(m_input, &QLineEdit::returnPressed, this, &MainWindow::onSendClicked);
+    connect(&m_agent, &Agent::responseChunkReceived, this, &MainWindow::onResponseChunk);
     connect(&m_agent, &Agent::responseReceived, this, &MainWindow::onResponseReceived);
     connect(&m_agent, &Agent::errorOccurred, this, &MainWindow::onErrorOccurred);
     connect(&m_agent, &Agent::modelStatusChanged, this,
@@ -81,6 +82,8 @@ void MainWindow::onSendClicked()
     m_input->clear();
     appendMessage(QStringLiteral("You"), text, QStringLiteral("#2c3e50"));
     setInputEnabled(false);
+    m_streamActive = true;
+    m_streamBlockStarted = false;
     m_agent.sendMessage(text);
 }
 
@@ -104,16 +107,46 @@ void MainWindow::onModelError(const QString &error)
     setInputEnabled(false);
 }
 
+void MainWindow::onResponseChunk(const QString &chunk)
+{
+    if (!m_streamBlockStarted) {
+        startStreamingBlock();
+    }
+
+    QTextCursor cursor = m_chatDisplay->textCursor();
+    cursor.movePosition(QTextCursor::End);
+    cursor.insertText(chunk);
+    m_chatDisplay->setTextCursor(cursor);
+    m_chatDisplay->verticalScrollBar()->setValue(m_chatDisplay->verticalScrollBar()->maximum());
+}
+
 void MainWindow::onResponseReceived(const QString &response)
 {
-    appendMessage(QStringLiteral("TitanAI"), response, QStringLiteral("#4a90d9"));
+    if (!m_streamActive) {
+        appendMessage(QStringLiteral("TitanAI"), response, QStringLiteral("#4a90d9"));
+    }
+
+    m_streamActive = false;
+    m_streamBlockStarted = false;
     setInputEnabled(true);
 }
 
 void MainWindow::onErrorOccurred(const QString &error)
 {
+    m_streamActive = false;
+    m_streamBlockStarted = false;
     appendMessage(QStringLiteral("Error"), error, QStringLiteral("#c0392b"));
     setInputEnabled(true);
+}
+
+void MainWindow::startStreamingBlock()
+{
+    m_chatDisplay->append(QStringLiteral("<b style=\"color:#4a90d9\">TitanAI:</b> "));
+    m_streamBlockStarted = true;
+
+    QTextCursor cursor = m_chatDisplay->textCursor();
+    cursor.movePosition(QTextCursor::End);
+    m_chatDisplay->setTextCursor(cursor);
 }
 
 void MainWindow::setInputEnabled(bool enabled)

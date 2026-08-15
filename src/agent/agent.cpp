@@ -6,6 +6,7 @@ Agent::Agent(QObject *parent)
     : QObject(parent)
     , m_ollamaClient(this)
 {
+    connect(&m_ollamaClient, &OllamaClient::responseChunkReceived, this, &Agent::responseChunkReceived);
     connect(&m_ollamaClient, &OllamaClient::responseReceived, this, &Agent::responseReceived);
     connect(&m_ollamaClient, &OllamaClient::errorOccurred, this, &Agent::errorOccurred);
 
@@ -22,6 +23,7 @@ void Agent::initializeModel(const QString &model)
 void Agent::onModelReady(const QString &model)
 {
     m_ollamaClient.setModel(model);
+    m_ollamaClient.warmUp();
     emit modelReady(model);
 }
 
