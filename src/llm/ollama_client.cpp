@@ -95,6 +95,71 @@ void OllamaClient::sendPrompt(const QString &prompt)
     });
 }
 
+void OllamaClient::requestCompletion(const QString &prompt)
+{
+    QString trimmedPrompt = prompt.trimmed();
+    if (trimmedPrompt.isEmpty()) {
+        return;
+    }
+
+    QNetworkRequest request(m_endpointUrl);
+    request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+
+    QJsonArray messages;
+    QJsonObject userMessageObj;
+    userMessageObj[QStringLiteral("role")] = QStringLiteral("user");
+    userMessageObj[QStringLiteral("content")] = trimmedPrompt;
+    messages.append(userMessageObj);
+
+    QJsonObject payloadObj;
+    payloadObj[QStringLiteral("model")] = m_model;
+    payloadObj[QStringLiteral("messages")] = messages;
+    payloadObj[QStringLiteral("stream")] = false;
+    payloadObj[QStringLiteral("keep_alive")] = -1;
+
+    QNetworkReply *reply = m_networkManager.post(
+        request, QJsonDocument(payloadObj).toJson(QJsonDocument::Compact));
+
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        handleCompletionReply(reply);
+        reply->deleteLater();
+    });
+}
+
+void OllamaClient::handleCompletionReply(QNetworkReply *reply)
+{
+    int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    if (reply->error() != QNetworkReply::NoError || statusCode >= 400) {
+        QString errorDetails;
+        if (statusCode > 0) {
+            errorDetails += QStringLiteral("HTTP Status %1. ").arg(statusCode);
+        }
+        if (reply->error() != QNetworkReply::NoError) {
+            errorDetails += QStringLiteral("Network Error (%1): %2")
+                                .arg(reply->error())
+                                .arg(reply->errorString());
+        }
+        emit completionError(errorDetails);
+        return;
+    }
+
+    QJsonParseError parseError;
+    QJsonDocument doc = QJsonDocument::fromJson(reply->readAll(), &parseError);
+    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+        emit completionError(QStringLiteral("Invalid response from Ollama."));
+        return;
+    }
+
+    QString content = doc.object().value(QStringLiteral("message")).toObject()
+                          .value(QStringLiteral("content")).toString();
+    if (content.trimmed().isEmpty()) {
+        emit completionError(QStringLiteral("The model returned an empty response."));
+        return;
+    }
+
+    emit completionReceived(content);
+}
+
 void OllamaClient::processStreamData(QNetworkReply *reply)
 {
     m_streamBuffer.append(reply->readAll());

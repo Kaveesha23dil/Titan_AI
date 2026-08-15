@@ -1,12 +1,17 @@
 #include "gui/main_window.hpp"
 
+#include <QCheckBox>
+#include <QDir>
+#include <QFileDialog>
 #include <QFont>
+#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QScrollBar>
+#include <QSignalBlocker>
 #include <QTextBrowser>
 #include <QVBoxLayout>
 
@@ -40,10 +45,39 @@ MainWindow::MainWindow(QWidget *parent)
     inputRow->addWidget(m_input, 1);
     inputRow->addWidget(m_sendButton);
 
+    auto *fixerBox = new QGroupBox(QStringLiteral("Developer Auto-Fix"), this);
+    auto *fixerLayout = new QVBoxLayout(fixerBox);
+
+    m_autoFixCheck = new QCheckBox(QStringLiteral("Auto-fix code errors"), fixerBox);
+    auto *checkRow = new QHBoxLayout;
+    checkRow->addWidget(m_autoFixCheck);
+    checkRow->addStretch(1);
+
+    m_projectEdit = new QLineEdit(fixerBox);
+    m_projectEdit->setPlaceholderText(QStringLiteral("e.g. /home/you/my-project"));
+    m_browseButton = new QPushButton(QStringLiteral("Browse"), fixerBox);
+    auto *projectRow = new QHBoxLayout;
+    projectRow->addWidget(new QLabel(QStringLiteral("Project:"), fixerBox));
+    projectRow->addWidget(m_projectEdit, 1);
+    projectRow->addWidget(m_browseButton);
+
+    m_buildEdit = new QLineEdit(fixerBox);
+    m_buildEdit->setPlaceholderText(QStringLiteral("e.g. cmake --build build   or   npm run build"));
+    m_buildFixButton = new QPushButton(QStringLiteral("Build && Fix"), fixerBox);
+    auto *buildRow = new QHBoxLayout;
+    buildRow->addWidget(new QLabel(QStringLiteral("Build:"), fixerBox));
+    buildRow->addWidget(m_buildEdit, 1);
+    buildRow->addWidget(m_buildFixButton);
+
+    fixerLayout->addLayout(checkRow);
+    fixerLayout->addLayout(projectRow);
+    fixerLayout->addLayout(buildRow);
+
     auto *central = new QWidget(this);
     auto *layout = new QVBoxLayout(central);
     layout->addWidget(header);
     layout->addWidget(m_statusLabel);
+    layout->addWidget(fixerBox);
     layout->addWidget(m_chatDisplay, 1);
     layout->addLayout(inputRow);
     setCentralWidget(central);
@@ -61,6 +95,49 @@ MainWindow::MainWindow(QWidget *parent)
             });
     connect(&m_agent, &Agent::modelReady, this, &MainWindow::onModelReady);
     connect(&m_agent, &Agent::modelError, this, &MainWindow::onModelError);
+
+    m_projectDirectory = m_settings.value(QStringLiteral("projectDir")).toString();
+    m_buildCommand = m_settings.value(QStringLiteral("buildCommand")).toString();
+    const bool autoFixEnabled = m_settings.value(QStringLiteral("autoFixEnabled"), false).toBool();
+
+    m_autoFixCheck->setChecked(autoFixEnabled);
+    m_projectEdit->setText(m_projectDirectory);
+    m_buildEdit->setText(m_buildCommand);
+    m_agent.setAutoFixEnabled(autoFixEnabled);
+    m_agent.setProjectDirectory(m_projectDirectory);
+    m_agent.setBuildCommand(m_buildCommand);
+
+    connect(m_autoFixCheck, &QCheckBox::toggled, this, [this](bool checked) {
+        m_settings.setValue(QStringLiteral("autoFixEnabled"), checked);
+        m_agent.setAutoFixEnabled(checked);
+    });
+    connect(m_projectEdit, &QLineEdit::editingFinished, this, [this]() {
+        m_projectDirectory = m_projectEdit->text().trimmed();
+        m_settings.setValue(QStringLiteral("projectDir"), m_projectDirectory);
+        m_agent.setProjectDirectory(m_projectDirectory);
+    });
+    connect(m_buildEdit, &QLineEdit::editingFinished, this, [this]() {
+        m_buildCommand = m_buildEdit->text().trimmed();
+        m_settings.setValue(QStringLiteral("buildCommand"), m_buildCommand);
+        m_agent.setBuildCommand(m_buildCommand);
+    });
+    connect(m_browseButton, &QPushButton::clicked, this, &MainWindow::onBrowseProject);
+    connect(m_buildFixButton, &QPushButton::clicked, this, &MainWindow::onBuildAndFixClicked);
+    connect(&m_agent, &Agent::autoFixEnabledChanged, this, [this](bool enabled) {
+        m_settings.setValue(QStringLiteral("autoFixEnabled"), enabled);
+        const QSignalBlocker blocker(m_autoFixCheck);
+        m_autoFixCheck->setChecked(enabled);
+    });
+    connect(&m_agent, &Agent::codeFixStatus, this, [this](const QString &message) {
+        appendMessage(QStringLiteral("TitanAI"), message, QStringLiteral("#4a90d9"));
+    });
+    connect(&m_agent, &Agent::codeFixFinished, this,
+            [this](const QString &summary, bool success) {
+                appendMessage(success ? QStringLiteral("TitanAI") : QStringLiteral("Error"),
+                              summary,
+                              success ? QStringLiteral("#4a90d9") : QStringLiteral("#c0392b"));
+                setInputEnabled(true);
+            });
 
     appendMessage(QStringLiteral("TitanAI"),
                   QStringLiteral("Welcome! Loading the local AI model. You can start chatting once "
@@ -170,6 +247,36 @@ void MainWindow::onToolOutput(const QString &line)
     appendPlainLine(line, QStringLiteral("#6b7280"));
 }
 
+void MainWindow::onBrowseProject()
+{
+    const QString startDir =
+        m_projectDirectory.isEmpty() ? QDir::homePath() : m_projectDirectory;
+    const QString directory = QFileDialog::getExistingDirectory(
+        this, QStringLiteral("Select Project Directory"), startDir);
+    if (directory.isEmpty()) {
+        return;
+    }
+    m_projectDirectory = directory;
+    m_projectEdit->setText(directory);
+    m_settings.setValue(QStringLiteral("projectDir"), directory);
+    m_agent.setProjectDirectory(directory);
+}
+
+void MainWindow::onBuildAndFixClicked()
+{
+    if (m_agent.isCodeFixBusy()) {
+        return;
+    }
+    if (!m_modelReady) {
+        appendMessage(QStringLiteral("Error"),
+                      QStringLiteral("The model is not ready yet. Please wait."),
+                      QStringLiteral("#c0392b"));
+        return;
+    }
+    setInputEnabled(false);
+    m_agent.runBuildAndFix();
+}
+
 void MainWindow::startStreamingBlock()
 {
     m_chatDisplay->append(QStringLiteral("<b style=\"color:#4a90d9\">TitanAI:</b> "));
@@ -184,6 +291,7 @@ void MainWindow::setInputEnabled(bool enabled)
 {
     m_input->setEnabled(enabled);
     m_sendButton->setEnabled(enabled);
+    m_buildFixButton->setEnabled(enabled);
     if (enabled) {
         m_input->setFocus();
     }
@@ -191,8 +299,10 @@ void MainWindow::setInputEnabled(bool enabled)
 
 void MainWindow::appendMessage(const QString &sender, const QString &text, const QString &color)
 {
+    QString escaped = text.toHtmlEscaped();
+    escaped.replace(QLatin1Char('\n'), QStringLiteral("<br/>"));
     m_chatDisplay->append(
-        QStringLiteral("<b style=\"color:%1\">%2:</b> %3").arg(color, sender, text.toHtmlEscaped()));
+        QStringLiteral("<b style=\"color:%1\">%2:</b> %3").arg(color, sender, escaped));
     m_chatDisplay->verticalScrollBar()->setValue(m_chatDisplay->verticalScrollBar()->maximum());
 }
 
