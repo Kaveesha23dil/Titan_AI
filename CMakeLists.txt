@@ -27,6 +27,7 @@ add_executable(TitanAI
     src/agent/agent.cpp
     src/llm/ollama_client.cpp
     src/llm/ollama_manager.cpp
+    src/tools/code_fixer.cpp
     src/tools/package_manager.cpp
     src/tools/system_info.cpp
 )

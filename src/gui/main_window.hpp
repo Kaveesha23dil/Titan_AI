@@ -2,13 +2,15 @@
 #define TITANAI_MAIN_WINDOW_HPP
 
 #include <QMainWindow>
+#include <QSettings>
 
 #include "agent/agent.hpp"
 
-class QTextBrowser;
+class QCheckBox;
+class QLabel;
 class QLineEdit;
 class QPushButton;
-class QLabel;
+class QTextBrowser;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -26,6 +28,8 @@ private slots:
     void onModelError(const QString &error);
     void onInstallRequested(const QStringList &packages);
     void onToolOutput(const QString &line);
+    void onBrowseProject();
+    void onBuildAndFixClicked();
 
 private:
     void setInputEnabled(bool enabled);
@@ -38,6 +42,14 @@ private:
     QLineEdit *m_input;
     QPushButton *m_sendButton;
     QLabel *m_statusLabel;
+    QCheckBox *m_autoFixCheck{nullptr};
+    QLineEdit *m_projectEdit{nullptr};
+    QPushButton *m_browseButton{nullptr};
+    QLineEdit *m_buildEdit{nullptr};
+    QPushButton *m_buildFixButton{nullptr};
+    QSettings m_settings{QStringLiteral("TitanAI"), QStringLiteral("TitanAI")};
+    QString m_projectDirectory;
+    QString m_buildCommand;
     bool m_modelReady{false};
     bool m_streamActive{false};
     bool m_streamBlockStarted{false};

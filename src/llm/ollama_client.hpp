@@ -17,6 +17,7 @@ public:
     ~OllamaClient() override = default;
 
     void sendPrompt(const QString &prompt);
+    void requestCompletion(const QString &prompt);
     void setModel(const QString &model);
     [[nodiscard]] const QString& model() const;
     void warmUp();
@@ -27,12 +28,15 @@ signals:
     void responseChunkReceived(const QString &chunk);
     void responseReceived(const QString &response);
     void errorOccurred(const QString &error);
+    void completionReceived(const QString &response);
+    void completionError(const QString &error);
 
 private:
     void processStreamData(QNetworkReply *reply);
     void handleStreamLine(const QByteArray &line);
     void finalizeResponse(QNetworkReply *reply);
     void rollbackLastUserMessage();
+    void handleCompletionReply(QNetworkReply *reply);
 
     QNetworkAccessManager m_networkManager;
     QUrl m_endpointUrl{QStringLiteral("http://127.0.0.1:11434/api/chat")};
