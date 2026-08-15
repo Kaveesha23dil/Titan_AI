@@ -18,11 +18,12 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Find Qt6 dependencies
-find_package(Qt6 REQUIRED COMPONENTS Core Network)
+find_package(Qt6 REQUIRED COMPONENTS Core Network Widgets)
 
 # Add target executable
 add_executable(TitanAI
     src/main.cpp
+    src/gui/main_window.cpp
     src/agent/agent.cpp
     src/llm/ollama_client.cpp
     src/tools/system_info.cpp
@@ -44,4 +45,5 @@ target_include_directories(TitanAI PRIVATE
 target_link_libraries(TitanAI PRIVATE
     Qt6::Core
     Qt6::Network
+    Qt6::Widgets
 )
