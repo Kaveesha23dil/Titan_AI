@@ -32,6 +32,26 @@ const QJsonArray& OllamaClient::history() const
     return m_history;
 }
 
+void OllamaClient::warmUp()
+{
+    QNetworkRequest request(m_warmupUrl);
+    request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+
+    QJsonObject payloadObj;
+    payloadObj[QStringLiteral("model")] = m_model;
+    payloadObj[QStringLiteral("prompt")] = QString();
+    payloadObj[QStringLiteral("stream")] = false;
+    payloadObj[QStringLiteral("keep_alive")] = -1;
+
+    QJsonDocument payloadDoc(payloadObj);
+    QByteArray postData = payloadDoc.toJson(QJsonDocument::Compact);
+
+    QNetworkReply *reply = m_networkManager.post(request, postData);
+    connect(reply, &QNetworkReply::finished, this, [reply]() {
+        reply->deleteLater();
+    });
+}
+
 void OllamaClient::sendPrompt(const QString &prompt)
 {
     QString trimmedPrompt = prompt.trimmed();
@@ -51,33 +71,98 @@ void OllamaClient::sendPrompt(const QString &prompt)
     QJsonObject payloadObj;
     payloadObj[QStringLiteral("model")] = m_model;
     payloadObj[QStringLiteral("messages")] = m_history;
-    payloadObj[QStringLiteral("stream")] = false;
+    payloadObj[QStringLiteral("stream")] = true;
+    payloadObj[QStringLiteral("keep_alive")] = -1;
 
     QJsonDocument payloadDoc(payloadObj);
     QByteArray postData = payloadDoc.toJson(QJsonDocument::Compact);
 
+    m_streamBuffer.clear();
+    m_streamedContent.clear();
+    m_streamDone = false;
+    m_streamFailed = false;
+
     QNetworkReply *reply = m_networkManager.post(request, postData);
 
+    connect(reply, &QNetworkReply::readyRead, this, [this, reply]() {
+        processStreamData(reply);
+    });
+
     connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        processStreamData(reply);
+        finalizeResponse(reply);
         reply->deleteLater();
+    });
+}
 
-        int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+void OllamaClient::processStreamData(QNetworkReply *reply)
+{
+    m_streamBuffer.append(reply->readAll());
+
+    while (true) {
+        int newlineIdx = m_streamBuffer.indexOf('\n');
+        if (newlineIdx == -1) {
+            break;
+        }
+
+        QByteArray line = m_streamBuffer.left(newlineIdx).trimmed();
+        m_streamBuffer.remove(0, newlineIdx + 1);
+
+        if (!line.isEmpty()) {
+            handleStreamLine(line);
+        }
+    }
+}
+
+void OllamaClient::handleStreamLine(const QByteArray &line)
+{
+    QJsonParseError parseError;
+    QJsonDocument lineDoc = QJsonDocument::fromJson(line, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !lineDoc.isObject()) {
+        return;
+    }
+
+    QJsonObject obj = lineDoc.object();
+
+    if (obj.contains(QStringLiteral("error"))) {
+        m_streamFailed = true;
+        emit errorOccurred(obj[QStringLiteral("error")].toString());
+        return;
+    }
+
+    QString content = obj.value(QStringLiteral("message")).toObject()
+                          .value(QStringLiteral("content")).toString();
+    if (!content.isEmpty()) {
+        m_streamedContent += content;
+        emit responseChunkReceived(content);
+    }
+
+    if (obj.value(QStringLiteral("done")).toBool()) {
+        m_streamDone = true;
+    }
+}
+
+void OllamaClient::finalizeResponse(QNetworkReply *reply)
+{
+    int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    QNetworkReply::NetworkError netError = reply->error();
+
+    if (m_streamFailed) {
+        rollbackLastUserMessage();
+        return;
+    }
+
+    if (netError != QNetworkReply::NoError || statusCode >= 400) {
+        QString errorDetails;
+        if (statusCode > 0) {
+            errorDetails += QStringLiteral("HTTP Status %1. ").arg(statusCode);
+        }
+        if (netError != QNetworkReply::NoError) {
+            errorDetails += QStringLiteral("Network Error (%1): %2. ").arg(netError).arg(reply->errorString());
+        }
+
         QByteArray responseData = reply->readAll();
-        QNetworkReply::NetworkError netError = reply->error();
-
-        if (netError != QNetworkReply::NoError || statusCode >= 400) {
-            if (!m_history.isEmpty()) {
-                m_history.removeAt(m_history.size() - 1);
-            }
-
-            QString errorDetails;
-            if (statusCode > 0) {
-                errorDetails += QStringLiteral("HTTP Status %1. ").arg(statusCode);
-            }
-            if (netError != QNetworkReply::NoError) {
-                errorDetails += QStringLiteral("Network Error (%1): %2. ").arg(netError).arg(reply->errorString());
-            }
-
+        if (m_streamBuffer.isEmpty()) {
             QJsonParseError parseError;
             QJsonDocument errDoc = QJsonDocument::fromJson(responseData, &parseError);
             if (parseError.error == QJsonParseError::NoError && errDoc.isObject() && errDoc.object().contains(QStringLiteral("error"))) {
@@ -85,58 +170,30 @@ void OllamaClient::sendPrompt(const QString &prompt)
             } else if (!responseData.isEmpty()) {
                 errorDetails += QStringLiteral("Response Body: %1").arg(QString::fromUtf8(responseData));
             }
-
-            emit errorOccurred(errorDetails);
-            return;
         }
 
-        QJsonParseError parseError;
-        QJsonDocument responseDoc = QJsonDocument::fromJson(responseData, &parseError);
+        rollbackLastUserMessage();
+        emit errorOccurred(errorDetails);
+        return;
+    }
 
-        if (parseError.error != QJsonParseError::NoError || !responseDoc.isObject()) {
-            if (!m_history.isEmpty()) {
-                m_history.removeAt(m_history.size() - 1);
-            }
-            QString errorMsg = QStringLiteral("Invalid JSON response from Ollama server: %1").arg(parseError.errorString());
-            emit errorOccurred(errorMsg);
-            return;
-        }
+    if (!m_streamDone) {
+        rollbackLastUserMessage();
+        emit errorOccurred(QStringLiteral("Stream ended unexpectedly before the response was complete."));
+        return;
+    }
 
-        QJsonObject rootObj = responseDoc.object();
+    QJsonObject assistantMessageObj;
+    assistantMessageObj[QStringLiteral("role")] = QStringLiteral("assistant");
+    assistantMessageObj[QStringLiteral("content")] = m_streamedContent;
+    m_history.append(assistantMessageObj);
 
-        if (rootObj.contains(QStringLiteral("error"))) {
-            if (!m_history.isEmpty()) {
-                m_history.removeAt(m_history.size() - 1);
-            }
-            QString errorMsg = QStringLiteral("Ollama API Error: %1").arg(rootObj[QStringLiteral("error")].toString());
-            emit errorOccurred(errorMsg);
-            return;
-        }
+    emit responseReceived(m_streamedContent);
+}
 
-        if (!rootObj.contains(QStringLiteral("message"))) {
-            if (!m_history.isEmpty()) {
-                m_history.removeAt(m_history.size() - 1);
-            }
-            emit errorOccurred(QStringLiteral("Invalid Response: Missing 'message' field in Ollama response."));
-            return;
-        }
-
-        QJsonObject messageObj = rootObj[QStringLiteral("message")].toObject();
-        if (!messageObj.contains(QStringLiteral("content"))) {
-            if (!m_history.isEmpty()) {
-                m_history.removeAt(m_history.size() - 1);
-            }
-            emit errorOccurred(QStringLiteral("Invalid Response: Missing 'content' field in message object."));
-            return;
-        }
-
-        QString responseContent = messageObj[QStringLiteral("content")].toString();
-
-        QJsonObject assistantMessageObj;
-        assistantMessageObj[QStringLiteral("role")] = QStringLiteral("assistant");
-        assistantMessageObj[QStringLiteral("content")] = responseContent;
-        m_history.append(assistantMessageObj);
-
-        emit responseReceived(responseContent);
-    });
+void OllamaClient::rollbackLastUserMessage()
+{
+    if (!m_history.isEmpty()) {
+        m_history.removeAt(m_history.size() - 1);
+    }
 }

@@ -20,6 +20,7 @@ public:
     void initializeModel(const QString &model);
 
 signals:
+    void responseChunkReceived(const QString &chunk);
     void responseReceived(const QString &response);
     void errorOccurred(const QString &error);
     void modelStatusChanged(OllamaManager::Status status, const QString &message);
