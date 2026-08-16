@@ -5,10 +5,12 @@
 #include <QSettings>
 
 #include "agent/agent.hpp"
+#include "voice/voice_engine.hpp"
 
 class QCheckBox;
 class QLabel;
 class QLineEdit;
+class QProgressBar;
 class QPushButton;
 class QTextBrowser;
 
@@ -31,13 +33,23 @@ private slots:
     void onBrowseProject();
     void onBuildAndFixClicked();
 
+    void onVoicePartial(const QString &text);
+    void onVoiceFinal(const QString &text);
+    void onVoiceError(const QString &error);
+    void onVoiceSettings();
+    void onVoiceButtonToggled(bool enabled);
+
 private:
     void setInputEnabled(bool enabled);
     void appendMessage(const QString &sender, const QString &text, const QString &color);
     void appendPlainLine(const QString &text, const QString &color);
     void startStreamingBlock();
+    void updateVoiceUi();
+    void saveVoiceSettings(const VoiceEngine::Config &config);
+    VoiceEngine::Config loadVoiceSettings();
 
     Agent m_agent;
+    VoiceEngine m_voiceEngine;
     QTextBrowser *m_chatDisplay;
     QLineEdit *m_input;
     QPushButton *m_sendButton;
@@ -47,6 +59,10 @@ private:
     QPushButton *m_browseButton{nullptr};
     QLineEdit *m_buildEdit{nullptr};
     QPushButton *m_buildFixButton{nullptr};
+    QPushButton *m_voiceButton{nullptr};
+    QPushButton *m_voiceSettingsButton{nullptr};
+    QLabel *m_voiceStatusLabel{nullptr};
+    QProgressBar *m_micLevelBar{nullptr};
     QSettings m_settings{QStringLiteral("TitanAI"), QStringLiteral("TitanAI")};
     QString m_projectDirectory;
     QString m_buildCommand;
