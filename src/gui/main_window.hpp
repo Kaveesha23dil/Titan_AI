@@ -3,6 +3,7 @@
 
 #include <QMainWindow>
 #include <QSettings>
+#include <QImage>
 
 #include "agent/agent.hpp"
 #include "voice/voice_engine.hpp"
@@ -38,13 +39,18 @@ private slots:
     void onVoiceError(const QString &error);
     void onVoiceSettings();
     void onVoiceButtonToggled(bool enabled);
+    void onCaptureFromCamera();
+    void onSelectImage();
+    void onClearPendingImage();
 
 private:
     void setInputEnabled(bool enabled);
     void appendMessage(const QString &sender, const QString &text, const QString &color);
+    void appendImage(const QImage &image);
     void appendPlainLine(const QString &text, const QString &color);
     void startStreamingBlock();
     void updateVoiceUi();
+    void updatePendingImageUi();
     void saveVoiceSettings(const VoiceEngine::Config &config);
     VoiceEngine::Config loadVoiceSettings();
 
@@ -63,6 +69,11 @@ private:
     QPushButton *m_voiceSettingsButton{nullptr};
     QLabel *m_voiceStatusLabel{nullptr};
     QProgressBar *m_micLevelBar{nullptr};
+    QPushButton *m_cameraButton{nullptr};
+    QPushButton *m_imageButton{nullptr};
+    QLabel *m_pendingImageLabel{nullptr};
+    QPushButton *m_clearImageButton{nullptr};
+    QImage m_pendingImage;
     QSettings m_settings{QStringLiteral("TitanAI"), QStringLiteral("TitanAI")};
     QString m_projectDirectory;
     QString m_buildCommand;

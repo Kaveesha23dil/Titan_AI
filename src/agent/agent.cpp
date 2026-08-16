@@ -1,5 +1,6 @@
 #include "agent/agent.hpp"
 
+#include <QBuffer>
 #include <QDir>
 #include <QFile>
 #include <QMap>
@@ -44,6 +45,10 @@ void Agent::sendMessage(const QString &message)
         return;
     }
 
+    if (handleCameraQuery(message)) {
+        return;
+    }
+
     if (handlePackageInstallQuery(message)) {
         return;
     }
@@ -62,6 +67,29 @@ void Agent::sendMessage(const QString &message)
 void Agent::performInstall(const QStringList &packages)
 {
     m_packageManager.install(packages);
+}
+
+void Agent::sendImageMessage(const QImage &image, const QString &text)
+{
+    if (image.isNull()) {
+        m_ollamaClient.sendPrompt(text);
+        return;
+    }
+
+    QImage scaled = image;
+    constexpr int kMaxDim = 1024;
+    const int maxSide = qMax(scaled.width(), scaled.height());
+    if (maxSide > kMaxDim) {
+        scaled = scaled.scaled(
+            kMaxDim, kMaxDim, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    }
+
+    QByteArray bytes;
+    QBuffer buffer(&bytes);
+    buffer.open(QIODevice::WriteOnly);
+    scaled.save(&buffer, "JPEG", 85);
+
+    m_ollamaClient.sendImagePrompt(text, {bytes.toBase64()});
 }
 
 void Agent::setAutoFixEnabled(bool enabled)
@@ -662,4 +690,50 @@ bool Agent::handleSystemInfoQuery(const QString &message)
     });
 
     return true;
+}
+
+bool Agent::handleCameraQuery(const QString &message)
+{
+    const QString lower = message.toLower().simplified();
+
+    static const QStringList phrases = {
+        QStringLiteral("open camera"),
+        QStringLiteral("open the camera"),
+        QStringLiteral("open webcam"),
+        QStringLiteral("open the webcam"),
+        QStringLiteral("start camera"),
+        QStringLiteral("start the camera"),
+        QStringLiteral("turn on camera"),
+        QStringLiteral("turn on the camera"),
+        QStringLiteral("launch camera"),
+        QStringLiteral("use camera"),
+        QStringLiteral("show camera"),
+        QStringLiteral("take a photo"),
+        QStringLiteral("take photo"),
+        QStringLiteral("take a picture"),
+        QStringLiteral("take picture"),
+        QStringLiteral("capture image"),
+        QStringLiteral("capture a photo"),
+    };
+
+    static const QStringList informationalHints = {
+        QStringLiteral("how to"), QStringLiteral("how do i"), QStringLiteral("how can i"),
+        QStringLiteral("what is"), QStringLiteral("what are"), QStringLiteral("explain"),
+        QStringLiteral("guide"), QStringLiteral("tutorial"), QStringLiteral("documentation"),
+    };
+
+    for (const QString &hint : informationalHints) {
+        if (lower.contains(hint)) {
+            return false;
+        }
+    }
+
+    for (const QString &phrase : phrases) {
+        if (lower.contains(phrase)) {
+            QTimer::singleShot(0, this, [this]() { emit cameraRequested(); });
+            return true;
+        }
+    }
+
+    return false;
 }

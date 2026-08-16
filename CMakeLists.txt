@@ -18,13 +18,14 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Find Qt6 dependencies
-find_package(Qt6 REQUIRED COMPONENTS Core Network Widgets Multimedia TextToSpeech)
+find_package(Qt6 REQUIRED COMPONENTS Core Network Widgets Multimedia MultimediaWidgets TextToSpeech)
 
 # Add target executable
 add_executable(TitanAI
     src/main.cpp
     src/gui/main_window.cpp
     src/gui/voice_settings_dialog.cpp
+    src/gui/camera_dialog.cpp
     src/agent/agent.cpp
     src/llm/ollama_client.cpp
     src/llm/ollama_manager.cpp
@@ -55,6 +56,7 @@ target_link_libraries(TitanAI PRIVATE
     Qt6::Network
     Qt6::Widgets
     Qt6::Multimedia
+    Qt6::MultimediaWidgets
     Qt6::TextToSpeech
 )
 

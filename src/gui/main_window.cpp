@@ -1,6 +1,8 @@
 #include "gui/main_window.hpp"
+#include "gui/camera_dialog.hpp"
 #include "gui/voice_settings_dialog.hpp"
 
+#include <QBuffer>
 #include <QCheckBox>
 #include <QDir>
 #include <QFileDialog>
@@ -71,11 +73,32 @@ MainWindow::MainWindow(QWidget *parent)
     voiceStatusRow->addStretch(1);
     voiceStatusRow->addWidget(m_micLevelBar);
 
+    m_cameraButton = new QPushButton(QStringLiteral("Camera"), this);
+    m_cameraButton->setToolTip(QStringLiteral("Open the camera to capture an image for analysis"));
+    m_imageButton = new QPushButton(QStringLiteral("Image"), this);
+    m_imageButton->setToolTip(QStringLiteral("Choose an image file to analyze"));
+
     auto *inputRow = new QHBoxLayout;
     inputRow->addWidget(m_input, 1);
     inputRow->addWidget(m_voiceButton);
     inputRow->addWidget(m_voiceSettingsButton);
+    inputRow->addWidget(m_cameraButton);
+    inputRow->addWidget(m_imageButton);
     inputRow->addWidget(m_sendButton);
+
+    m_pendingImageLabel = new QLabel(this);
+    m_pendingImageLabel->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
+    m_pendingImageLabel->setStyleSheet(QStringLiteral("color:#4a90d9; font-size:11px;"));
+    m_pendingImageLabel->setTextFormat(Qt::RichText);
+    m_pendingImageLabel->setVisible(false);
+
+    m_clearImageButton = new QPushButton(QStringLiteral("Clear image"), this);
+    m_clearImageButton->setVisible(false);
+
+    auto *pendingImageRow = new QHBoxLayout;
+    pendingImageRow->addWidget(m_pendingImageLabel);
+    pendingImageRow->addStretch(1);
+    pendingImageRow->addWidget(m_clearImageButton);
 
     auto *fixerBox = new QGroupBox(QStringLiteral("Developer Auto-Fix"), this);
     auto *fixerLayout = new QVBoxLayout(fixerBox);
@@ -112,6 +135,7 @@ MainWindow::MainWindow(QWidget *parent)
     layout->addWidget(fixerBox);
     layout->addWidget(m_chatDisplay, 1);
     layout->addLayout(voiceStatusRow);
+    layout->addLayout(pendingImageRow);
     layout->addLayout(inputRow);
     setCentralWidget(central);
 
@@ -175,6 +199,11 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_voiceButton, &QPushButton::toggled, this, &MainWindow::onVoiceButtonToggled);
     connect(m_voiceSettingsButton, &QPushButton::clicked, this, &MainWindow::onVoiceSettings);
 
+    connect(m_cameraButton, &QPushButton::clicked, this, &MainWindow::onCaptureFromCamera);
+    connect(m_imageButton, &QPushButton::clicked, this, &MainWindow::onSelectImage);
+    connect(m_clearImageButton, &QPushButton::clicked, this, &MainWindow::onClearPendingImage);
+    connect(&m_agent, &Agent::cameraRequested, this, &MainWindow::onCaptureFromCamera);
+
     connect(&m_voiceEngine, &VoiceEngine::listeningChanged, this, [this](bool listening) {
         const QSignalBlocker blocker(m_voiceButton);
         m_voiceButton->setChecked(listening);
@@ -218,14 +247,28 @@ void MainWindow::onSendClicked()
     }
 
     QString text = m_input->text().trimmed();
-    if (text.isEmpty()) {
+    if (text.isEmpty() && m_pendingImage.isNull()) {
         return;
     }
 
     m_input->clear();
     appendMessage(QStringLiteral("You"), text, QStringLiteral("#2c3e50"));
+    if (!m_pendingImage.isNull()) {
+        appendImage(m_pendingImage);
+    }
     setInputEnabled(false);
-    m_agent.sendMessage(text);
+
+    if (m_pendingImage.isNull()) {
+        m_agent.sendMessage(text);
+    } else {
+        const QImage image = m_pendingImage;
+        m_pendingImage = QImage();
+        updatePendingImageUi();
+        if (text.isEmpty()) {
+            text = QStringLiteral("Describe what is shown in this image.");
+        }
+        m_agent.sendImageMessage(image, text);
+    }
 }
 
 void MainWindow::onModelReady(const QString &model)
@@ -423,6 +466,88 @@ void MainWindow::onVoiceButtonToggled(bool enabled)
     } else {
         m_voiceEngine.stopListening();
     }
+}
+
+void MainWindow::onCaptureFromCamera()
+{
+    CameraDialog dialog(this);
+    if (dialog.exec() == QDialog::Accepted) {
+        const QImage image = dialog.image();
+        if (image.isNull()) {
+            return;
+        }
+        m_pendingImage = image;
+        updatePendingImageUi();
+        appendMessage(QStringLiteral("TitanAI"),
+                      QStringLiteral("Image captured. Ask your question about it and press Send."),
+                      QStringLiteral("#4a90d9"));
+    }
+}
+
+void MainWindow::onSelectImage()
+{
+    const QString file = QFileDialog::getOpenFileName(
+        this,
+        QStringLiteral("Select Image"),
+        QDir::homePath(),
+        QStringLiteral("Images (*.png *.jpg *.jpeg *.bmp *.webp);;All Files (*)"));
+    if (file.isEmpty()) {
+        return;
+    }
+
+    QImage image(file);
+    if (image.isNull()) {
+        appendMessage(QStringLiteral("Error"),
+                      QStringLiteral("Could not load the selected image."),
+                      QStringLiteral("#c0392b"));
+        return;
+    }
+
+    m_pendingImage = image;
+    updatePendingImageUi();
+    appendMessage(QStringLiteral("TitanAI"),
+                  QStringLiteral("Image selected. Ask your question about it and press Send."),
+                  QStringLiteral("#4a90d9"));
+}
+
+void MainWindow::onClearPendingImage()
+{
+    m_pendingImage = QImage();
+    updatePendingImageUi();
+}
+
+void MainWindow::updatePendingImageUi()
+{
+    const bool hasImage = !m_pendingImage.isNull();
+    m_pendingImageLabel->setVisible(hasImage);
+    m_clearImageButton->setVisible(hasImage);
+    if (hasImage) {
+        QImage thumb = m_pendingImage.scaled(32, 32, Qt::KeepAspectRatio,
+                                             Qt::SmoothTransformation);
+        QByteArray bytes;
+        QBuffer buffer(&bytes);
+        buffer.open(QIODevice::WriteOnly);
+        thumb.save(&buffer, "PNG");
+        m_pendingImageLabel->setText(
+            QStringLiteral("<img src=\"data:image/png;base64,%1\"/> Image attached "
+                           "&mdash; type a question and press Send.")
+                .arg(QString::fromLatin1(bytes.toBase64())));
+    }
+}
+
+void MainWindow::appendImage(const QImage &image)
+{
+    QImage thumb = image.scaled(320, 320, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    QByteArray bytes;
+    QBuffer buffer(&bytes);
+    buffer.open(QIODevice::WriteOnly);
+    thumb.save(&buffer, "PNG");
+
+    m_chatDisplay->append(
+        QStringLiteral("<b style=\"color:#2c3e50\">You:</b><br/>"
+                       "<img src=\"data:image/png;base64,%1\" style=\"max-width:100%;\"/>")
+            .arg(QString::fromLatin1(bytes.toBase64())));
+    m_chatDisplay->verticalScrollBar()->setValue(m_chatDisplay->verticalScrollBar()->maximum());
 }
 
 VoiceEngine::Config MainWindow::loadVoiceSettings()
