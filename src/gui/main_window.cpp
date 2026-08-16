@@ -408,6 +408,9 @@ void MainWindow::onVoiceSettings()
     if (dialog.exec() == QDialog::Accepted) {
         const VoiceEngine::Config config = dialog.config();
         m_voiceEngine.setConfig(config);
+        if (config.voiceEnabled && config.wakeWordEnabled) {
+            m_voiceEngine.startWakeWordListening();
+        }
         saveVoiceSettings(config);
         updateVoiceUi();
     }

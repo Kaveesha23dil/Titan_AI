@@ -53,6 +53,11 @@ public:
     void stopListening();
     bool isListening() const;
 
+    // Starts wake-word spotting. This is only ever called in response to an
+    // explicit user action (e.g. enabling the wake word in Voice Settings) so
+    // the voice assistant stays independent of the AI assistant startup.
+    void startWakeWordListening();
+
     void speak(const QString &text);
     void stopSpeaking();
     bool isSpeaking() const;
@@ -71,7 +76,6 @@ signals:
 
 private:
     bool ensureRecognizerStarted();
-    void beginWakeWordListening();
     void onAudioChunk(const QByteArray &pcm);
     void onSpeechEnded();
     void onWakeWordDetected();
