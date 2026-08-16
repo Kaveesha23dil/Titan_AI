@@ -84,12 +84,12 @@ void VoiceEngine::setConfig(const Config &config)
         m_tts.setVoice(m_config.ttsVoice);
     }
 
-    if (m_config.voiceEnabled && m_config.wakeWordEnabled && SpeechRecognizer::isAvailable()) {
-        beginWakeWordListening();
-    } else if (m_wakeActive) {
-        m_capture.stop();
-        m_wakeActive = false;
-        emit sttStatusChanged(QStringLiteral("Wake word disabled."));
+    if (!m_config.voiceEnabled || !m_config.wakeWordEnabled) {
+        if (m_wakeActive) {
+            m_capture.stop();
+            m_wakeActive = false;
+            emit sttStatusChanged(QStringLiteral("Wake word disabled."));
+        }
     }
 }
 
@@ -136,7 +136,7 @@ QString VoiceEngine::resolveDefaultModelPath() const
     return {};
 }
 
-void VoiceEngine::beginWakeWordListening()
+void VoiceEngine::startWakeWordListening()
 {
     if (m_wakeActive || m_listening || isSpeaking()) {
         return;
@@ -288,7 +288,7 @@ void VoiceEngine::onSpeakingChanged(bool speaking)
         }
     } else if (m_pauseWakeOnResume) {
         m_pauseWakeOnResume = false;
-        beginWakeWordListening();
+        startWakeWordListening();
     }
 }
 
