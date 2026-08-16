@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QString>
 #include <QStringList>
+#include <QImage>
 #include "llm/ollama_client.hpp"
 #include "llm/ollama_manager.hpp"
 #include "tools/code_fixer.hpp"
@@ -20,6 +21,7 @@ public:
     ~Agent() override = default;
 
     void sendMessage(const QString &message);
+    void sendImageMessage(const QImage &image, const QString &text);
     void initializeModel(const QString &model);
     void performInstall(const QStringList &packages);
     void setAutoFixEnabled(bool enabled);
@@ -37,6 +39,7 @@ signals:
     void modelReady(const QString &model);
     void modelError(const QString &error);
     void installRequested(const QStringList &packages);
+    void cameraRequested();
     void toolOutputReceived(const QString &line);
     void autoFixEnabledChanged(bool enabled);
     void codeFixStatus(const QString &message);
@@ -51,6 +54,7 @@ private slots:
 
 private:
     bool handleSystemInfoQuery(const QString &message);
+    bool handleCameraQuery(const QString &message);
     bool handlePackageInstallQuery(const QString &message);
     bool handleAutoFixToggleQuery(const QString &message);
     bool handleCodeFixRequestQuery(const QString &message);

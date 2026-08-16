@@ -63,6 +63,31 @@ void OllamaClient::sendPrompt(const QString &prompt)
     userMessageObj[QStringLiteral("role")] = QStringLiteral("user");
     userMessageObj[QStringLiteral("content")] = trimmedPrompt;
 
+    sendChatMessage(userMessageObj);
+}
+
+void OllamaClient::sendImagePrompt(const QString &prompt, const QList<QByteArray> &encodedImages)
+{
+    QString trimmedPrompt = prompt.trimmed();
+    if (trimmedPrompt.isEmpty() || encodedImages.isEmpty()) {
+        return;
+    }
+
+    QJsonObject userMessageObj;
+    userMessageObj[QStringLiteral("role")] = QStringLiteral("user");
+    userMessageObj[QStringLiteral("content")] = trimmedPrompt;
+
+    QJsonArray imagesArray;
+    for (const QByteArray &image : encodedImages) {
+        imagesArray.append(QString::fromLatin1(image));
+    }
+    userMessageObj[QStringLiteral("images")] = imagesArray;
+
+    sendChatMessage(userMessageObj);
+}
+
+void OllamaClient::sendChatMessage(const QJsonObject &userMessageObj)
+{
     m_history.append(userMessageObj);
 
     QNetworkRequest request(m_endpointUrl);

@@ -17,6 +17,7 @@ public:
     ~OllamaClient() override = default;
 
     void sendPrompt(const QString &prompt);
+    void sendImagePrompt(const QString &prompt, const QList<QByteArray> &encodedImages);
     void requestCompletion(const QString &prompt);
     void setModel(const QString &model);
     [[nodiscard]] const QString& model() const;
@@ -32,6 +33,7 @@ signals:
     void completionError(const QString &error);
 
 private:
+    void sendChatMessage(const QJsonObject &userMessageObj);
     void processStreamData(QNetworkReply *reply);
     void handleStreamLine(const QByteArray &line);
     void finalizeResponse(QNetworkReply *reply);

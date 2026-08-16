@@ -19,6 +19,21 @@ TitanAI aims to deliver a privacy-respecting, high-performance desktop AI compan
 - **GUI**: Qt 6 (Core, Network, Widgets)
 - **Voice (optional)**: Qt 6 Multimedia (microphone capture), Qt 6 TextToSpeech / `espeak-ng` (spoken replies), Vosk (offline speech-to-text)
 
+## Image Analysis
+
+TitanAI can analyze images captured from your camera or selected from disk using a
+vision-capable local model (the default model `gemma3:4b` supports images):
+
+- Say **"open camera"** in the chat (or click the **Camera** button) to open the live
+  camera dialog, point it at an object, and press **Capture**.
+- Or click **Image** to pick an image file instead.
+- The captured/selected image is attached to your next message. Type a question (e.g.
+  *"suggest me what things I can create using this board"*) and press **Send** — the
+  assistant analyzes the image and answers.
+
+The image is downscaled and compressed before being sent to the model, and a thumbnail
+of every analyzed image is shown in the chat.
+
 ## Voice Features
 
 TitanAI includes a fully local voice assistant built on top of the chat GUI:
