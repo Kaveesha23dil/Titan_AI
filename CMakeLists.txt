@@ -39,6 +39,9 @@ add_executable(TitanAI
     src/learning/task_tracker.cpp
     src/learning/activity_analyzer.cpp
     src/learning/suggestion_engine.cpp
+    src/calendar/calendar_manager.cpp
+    src/calendar/notification_manager.cpp
+    src/gui/calendar_settings_dialog.cpp
 )
 
 # Enable compiler warnings

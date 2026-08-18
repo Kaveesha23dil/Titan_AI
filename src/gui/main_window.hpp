@@ -43,6 +43,9 @@ private slots:
     void onSelectImage();
     void onClearPendingImage();
     void onStartupSuggestions(const QString &suggestions);
+    void onCalendarEventsReady(const QString &eventsSummary);
+    void onCalendarNotificationAlert(const QString &title, const QString &message);
+    void onOpenCalendarSettings();
 
 private:
     void setInputEnabled(bool enabled);
@@ -74,6 +77,8 @@ private:
     QPushButton *m_imageButton{nullptr};
     QLabel *m_pendingImageLabel{nullptr};
     QPushButton *m_clearImageButton{nullptr};
+    QPushButton *m_calendarButton{nullptr};
+    QLabel *m_notificationBanner{nullptr};
     QImage m_pendingImage;
     QSettings m_settings{QStringLiteral("TitanAI"), QStringLiteral("TitanAI")};
     QString m_projectDirectory;
