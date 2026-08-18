@@ -25,6 +25,8 @@ Agent::Agent(QObject *parent)
     connect(&m_packageManager, &PackageManager::finished, this, &Agent::onPackageManagerFinished);
 
     connect(&m_codeFixer, &CodeFixer::buildFinished, this, &Agent::onCodeFixBuildFinished);
+
+    m_suggestionEngine.initialize(&m_taskTracker, &m_activityAnalyzer);
 }
 
 void Agent::initializeModel(const QString &model)
@@ -736,4 +738,44 @@ bool Agent::handleCameraQuery(const QString &message)
     }
 
     return false;
+}
+
+void Agent::startLearning()
+{
+    m_taskTracker.startTracking();
+    emit learningStarted();
+}
+
+void Agent::stopLearning()
+{
+    m_taskTracker.stopTracking();
+    emit learningStopped();
+}
+
+bool Agent::isLearning() const
+{
+    return m_taskTracker.isTracking();
+}
+
+QString Agent::getStartupSuggestions() const
+{
+    QList<TaskEntry> entries = m_taskTracker.recentEntries(500);
+
+    ActivityAnalyzer analyzer;
+    analyzer.analyze(entries);
+
+    SuggestionEngine engine;
+    engine.initialize(const_cast<TaskTracker *>(&m_taskTracker), &analyzer);
+
+    const QList<Suggestion> suggestions = engine.generateStartupSuggestions();
+    return engine.formatSuggestions(suggestions);
+}
+
+void Agent::refreshSuggestions()
+{
+    QList<TaskEntry> entries = m_taskTracker.recentEntries(500);
+    m_activityAnalyzer.analyze(entries);
+    const QList<Suggestion> suggestions = m_suggestionEngine.generateStartupSuggestions();
+    const QString formatted = m_suggestionEngine.formatSuggestions(suggestions);
+    emit startupSuggestionsReady(formatted);
 }

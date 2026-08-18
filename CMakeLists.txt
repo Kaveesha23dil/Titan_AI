@@ -36,6 +36,9 @@ add_executable(TitanAI
     src/voice/speech_recognizer.cpp
     src/voice/text_to_speech.cpp
     src/voice/voice_engine.cpp
+    src/learning/task_tracker.cpp
+    src/learning/activity_analyzer.cpp
+    src/learning/suggestion_engine.cpp
 )
 
 # Enable compiler warnings

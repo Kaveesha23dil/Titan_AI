@@ -196,6 +196,8 @@ MainWindow::MainWindow(QWidget *parent)
                 setInputEnabled(true);
             });
 
+    connect(&m_agent, &Agent::startupSuggestionsReady, this, &MainWindow::onStartupSuggestions);
+
     connect(m_voiceButton, &QPushButton::toggled, this, &MainWindow::onVoiceButtonToggled);
     connect(m_voiceSettingsButton, &QPushButton::clicked, this, &MainWindow::onVoiceSettings);
 
@@ -281,6 +283,15 @@ void MainWindow::onModelReady(const QString &model)
                       .arg(model),
                   QStringLiteral("#4a90d9"));
     setInputEnabled(true);
+
+    m_agent.startLearning();
+
+    QTimer::singleShot(2000, this, [this]() {
+        const QString suggestions = m_agent.getStartupSuggestions();
+        if (!suggestions.isEmpty()) {
+            appendMessage(QStringLiteral("TitanAI"), suggestions, QStringLiteral("#4a90d9"));
+        }
+    });
 }
 
 void MainWindow::onModelError(const QString &error)
@@ -606,5 +617,12 @@ void MainWindow::updateVoiceUi()
     } else {
         m_voiceStatusLabel->setText(
             QStringLiteral("Voice ready (engine: %1)").arg(m_voiceEngine.ttsEngineName()));
+    }
+}
+
+void MainWindow::onStartupSuggestions(const QString &suggestions)
+{
+    if (!suggestions.isEmpty()) {
+        appendMessage(QStringLiteral("TitanAI"), suggestions, QStringLiteral("#4a90d9"));
     }
 }

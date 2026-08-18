@@ -42,6 +42,7 @@ private slots:
     void onCaptureFromCamera();
     void onSelectImage();
     void onClearPendingImage();
+    void onStartupSuggestions(const QString &suggestions);
 
 private:
     void setInputEnabled(bool enabled);
