@@ -13,6 +13,8 @@
 #include "learning/task_tracker.hpp"
 #include "learning/activity_analyzer.hpp"
 #include "learning/suggestion_engine.hpp"
+#include "calendar/calendar_manager.hpp"
+#include "calendar/notification_manager.hpp"
 
 class Agent : public QObject {
     Q_OBJECT
@@ -40,6 +42,10 @@ public:
     [[nodiscard]] QString getStartupSuggestions() const;
     void refreshSuggestions();
 
+    void startCalendar();
+    [[nodiscard]] CalendarManager &calendarManager();
+    [[nodiscard]] NotificationManager &notificationManager();
+
 signals:
     void responseChunkReceived(const QString &chunk);
     void responseReceived(const QString &response);
@@ -56,6 +62,8 @@ signals:
     void learningStarted();
     void learningStopped();
     void startupSuggestionsReady(const QString &suggestions);
+    void calendarEventsReady(const QString &eventsSummary);
+    void calendarNotificationAlert(const QString &title, const QString &message);
 
 private slots:
     void onModelReady(const QString &model);
@@ -67,6 +75,7 @@ private slots:
 private:
     bool handleSystemInfoQuery(const QString &message);
     bool handleCameraQuery(const QString &message);
+    bool handleCalendarQuery(const QString &message);
     bool handlePackageInstallQuery(const QString &message);
     bool handleAutoFixToggleQuery(const QString &message);
     bool handleCodeFixRequestQuery(const QString &message);
@@ -89,6 +98,8 @@ private:
     TaskTracker m_taskTracker;
     ActivityAnalyzer m_activityAnalyzer;
     SuggestionEngine m_suggestionEngine;
+    CalendarManager m_calendarManager;
+    NotificationManager m_notificationManager;
     bool m_autoFixEnabled{false};
     bool m_codeFixInProgress{false};
     QString m_projectDirectory;

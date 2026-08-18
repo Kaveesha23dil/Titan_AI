@@ -1,6 +1,7 @@
 #include "gui/main_window.hpp"
 #include "gui/camera_dialog.hpp"
 #include "gui/voice_settings_dialog.hpp"
+#include "gui/calendar_settings_dialog.hpp"
 
 #include <QBuffer>
 #include <QCheckBox>
@@ -77,6 +78,8 @@ MainWindow::MainWindow(QWidget *parent)
     m_cameraButton->setToolTip(QStringLiteral("Open the camera to capture an image for analysis"));
     m_imageButton = new QPushButton(QStringLiteral("Image"), this);
     m_imageButton->setToolTip(QStringLiteral("Choose an image file to analyze"));
+    m_calendarButton = new QPushButton(QStringLiteral("Calendar"), this);
+    m_calendarButton->setToolTip(QStringLiteral("Manage calendar files and notification settings"));
 
     auto *inputRow = new QHBoxLayout;
     inputRow->addWidget(m_input, 1);
@@ -84,6 +87,7 @@ MainWindow::MainWindow(QWidget *parent)
     inputRow->addWidget(m_voiceSettingsButton);
     inputRow->addWidget(m_cameraButton);
     inputRow->addWidget(m_imageButton);
+    inputRow->addWidget(m_calendarButton);
     inputRow->addWidget(m_sendButton);
 
     m_pendingImageLabel = new QLabel(this);
@@ -128,10 +132,20 @@ MainWindow::MainWindow(QWidget *parent)
     fixerLayout->addLayout(projectRow);
     fixerLayout->addLayout(buildRow);
 
+    m_notificationBanner = new QLabel(this);
+    m_notificationBanner->setAlignment(Qt::AlignCenter);
+    m_notificationBanner->setWordWrap(true);
+    m_notificationBanner->setStyleSheet(
+        QStringLiteral("QLabel { background: #e8f4fd; border: 1px solid #b3d9f2; border-radius: 4px;"
+                       "padding: 6px; color: #1a5276; font-size: 12px; }"));
+    m_notificationBanner->setVisible(false);
+    m_notificationBanner->setTextFormat(Qt::RichText);
+
     auto *central = new QWidget(this);
     auto *layout = new QVBoxLayout(central);
     layout->addWidget(header);
     layout->addWidget(m_statusLabel);
+    layout->addWidget(m_notificationBanner);
     layout->addWidget(fixerBox);
     layout->addWidget(m_chatDisplay, 1);
     layout->addLayout(voiceStatusRow);
@@ -197,6 +211,9 @@ MainWindow::MainWindow(QWidget *parent)
             });
 
     connect(&m_agent, &Agent::startupSuggestionsReady, this, &MainWindow::onStartupSuggestions);
+    connect(&m_agent, &Agent::calendarEventsReady, this, &MainWindow::onCalendarEventsReady);
+    connect(&m_agent, &Agent::calendarNotificationAlert, this, &MainWindow::onCalendarNotificationAlert);
+    connect(m_calendarButton, &QPushButton::clicked, this, &MainWindow::onOpenCalendarSettings);
 
     connect(m_voiceButton, &QPushButton::toggled, this, &MainWindow::onVoiceButtonToggled);
     connect(m_voiceSettingsButton, &QPushButton::clicked, this, &MainWindow::onVoiceSettings);
@@ -285,6 +302,9 @@ void MainWindow::onModelReady(const QString &model)
     setInputEnabled(true);
 
     m_agent.startLearning();
+
+    m_agent.startCalendar();
+    m_agent.calendarManager().setAutoRefresh(true);
 
     QTimer::singleShot(2000, this, [this]() {
         const QString suggestions = m_agent.getStartupSuggestions();
@@ -625,4 +645,31 @@ void MainWindow::onStartupSuggestions(const QString &suggestions)
     if (!suggestions.isEmpty()) {
         appendMessage(QStringLiteral("TitanAI"), suggestions, QStringLiteral("#4a90d9"));
     }
+}
+
+void MainWindow::onCalendarEventsReady(const QString &eventsSummary)
+{
+    if (!eventsSummary.isEmpty()) {
+        appendMessage(QStringLiteral("TitanAI"), eventsSummary, QStringLiteral("#4a90d9"));
+    }
+}
+
+void MainWindow::onCalendarNotificationAlert(const QString &title, const QString &message)
+{
+    m_notificationBanner->setText(QStringLiteral("<b>%1</b> - %2")
+                                     .arg(title.toHtmlEscaped(), message.toHtmlEscaped()));
+    m_notificationBanner->setVisible(true);
+
+    QTimer::singleShot(15000, this, [this]() {
+        m_notificationBanner->setVisible(false);
+    });
+
+    appendMessage(QStringLiteral("TitanAI"), QStringLiteral("[%1] %2").arg(title, message),
+                  QStringLiteral("#e67e22"));
+}
+
+void MainWindow::onOpenCalendarSettings()
+{
+    CalendarSettingsDialog dialog(m_agent.calendarManager(), m_agent.notificationManager(), this);
+    dialog.exec();
 }

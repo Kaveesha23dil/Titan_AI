@@ -26,6 +26,15 @@ Agent::Agent(QObject *parent)
 
     connect(&m_codeFixer, &CodeFixer::buildFinished, this, &Agent::onCodeFixBuildFinished);
 
+    connect(&m_calendarManager, &CalendarManager::eventsUpdated, this, [this]() {
+        const QList<CalendarEvent> upcoming = m_calendarManager.getUpcomingEvents(24);
+        m_notificationManager.checkReminders(upcoming);
+    });
+    connect(&m_notificationManager, &NotificationManager::notificationTriggered, this,
+            [this](const QString &title, const QString &message, const CalendarEvent &) {
+                emit calendarNotificationAlert(title, message);
+            });
+
     m_suggestionEngine.initialize(&m_taskTracker, &m_activityAnalyzer);
 }
 
@@ -48,6 +57,10 @@ void Agent::sendMessage(const QString &message)
     }
 
     if (handleCameraQuery(message)) {
+        return;
+    }
+
+    if (handleCalendarQuery(message)) {
         return;
     }
 
@@ -778,4 +791,103 @@ void Agent::refreshSuggestions()
     const QList<Suggestion> suggestions = m_suggestionEngine.generateStartupSuggestions();
     const QString formatted = m_suggestionEngine.formatSuggestions(suggestions);
     emit startupSuggestionsReady(formatted);
+}
+
+void Agent::startCalendar()
+{
+    m_calendarManager.loadAllCalendars();
+    const QList<CalendarEvent> upcoming = m_calendarManager.getUpcomingEvents(24);
+    m_notificationManager.checkReminders(upcoming);
+
+    if (!m_calendarManager.calendarFiles().isEmpty()) {
+        const QString summary = m_calendarManager.formatUpcomingSummary();
+        emit calendarEventsReady(summary);
+    }
+}
+
+CalendarManager &Agent::calendarManager()
+{
+    return m_calendarManager;
+}
+
+NotificationManager &Agent::notificationManager()
+{
+    return m_notificationManager;
+}
+
+bool Agent::handleCalendarQuery(const QString &message)
+{
+    const QString lower = message.toLower().simplified();
+
+    static const QStringList calendarKeywords = {
+        QStringLiteral("schedule"),
+        QStringLiteral("events"),
+        QStringLiteral("meeting"),
+        QStringLiteral("meetings"),
+        QStringLiteral("calendar"),
+        QStringLiteral("today"),
+        QStringLiteral("upcoming"),
+        QStringLiteral("agenda"),
+        QStringLiteral("appointment"),
+    };
+
+    bool isCalendarQuery = false;
+    for (const QString &keyword : calendarKeywords) {
+        if (lower.contains(keyword)) {
+            isCalendarQuery = true;
+            break;
+        }
+    }
+
+    if (!isCalendarQuery) {
+        return false;
+    }
+
+    static const QStringList informationalHints = {
+        QStringLiteral("how to"),
+        QStringLiteral("how do i"),
+        QStringLiteral("what is"),
+        QStringLiteral("explain"),
+        QStringLiteral("guide"),
+        QStringLiteral("tutorial"),
+    };
+    for (const QString &hint : informationalHints) {
+        if (lower.contains(hint)) {
+            return false;
+        }
+    }
+
+    QString response;
+    if (lower.contains(QStringLiteral("today"))) {
+        const QList<CalendarEvent> today = m_calendarManager.getTodaysEvents();
+        if (today.isEmpty()) {
+            response = QStringLiteral("No events scheduled for today.");
+        } else {
+            response = QStringLiteral("**Today's Schedule:**\n\n") + m_calendarManager.formatEventList(today);
+        }
+    } else if (lower.contains(QStringLiteral("next")) || lower.contains(QStringLiteral("upcoming"))) {
+        response = m_calendarManager.formatUpcomingSummary();
+    } else {
+        const QList<CalendarEvent> today = m_calendarManager.getTodaysEvents();
+        const QList<CalendarEvent> upcoming = m_calendarManager.getUpcomingEvents(48);
+
+        if (today.isEmpty() && upcoming.isEmpty()) {
+            response = m_calendarManager.calendarFiles().isEmpty()
+                           ? QStringLiteral("No calendar files are configured. Add an ICS file via Calendar Settings.")
+                           : QStringLiteral("No upcoming events found in your calendars.");
+        } else {
+            if (!today.isEmpty()) {
+                response += QStringLiteral("**Today:**\n") + m_calendarManager.formatEventList(today) + QStringLiteral("\n");
+            }
+            if (!upcoming.isEmpty()) {
+                response += QStringLiteral("**Upcoming (48 hours):**\n") + m_calendarManager.formatEventList(upcoming);
+            }
+        }
+    }
+
+    QTimer::singleShot(0, this, [this, response]() {
+        emit responseReceived(response);
+    });
+
+    return true;
 }
