@@ -10,6 +10,9 @@
 #include "tools/code_fixer.hpp"
 #include "tools/package_manager.hpp"
 #include "tools/system_info.hpp"
+#include "learning/task_tracker.hpp"
+#include "learning/activity_analyzer.hpp"
+#include "learning/suggestion_engine.hpp"
 
 class Agent : public QObject {
     Q_OBJECT
@@ -31,6 +34,12 @@ public:
     void runBuildAndFix();
     [[nodiscard]] bool isCodeFixBusy() const;
 
+    void startLearning();
+    void stopLearning();
+    [[nodiscard]] bool isLearning() const;
+    [[nodiscard]] QString getStartupSuggestions() const;
+    void refreshSuggestions();
+
 signals:
     void responseChunkReceived(const QString &chunk);
     void responseReceived(const QString &response);
@@ -44,6 +53,9 @@ signals:
     void autoFixEnabledChanged(bool enabled);
     void codeFixStatus(const QString &message);
     void codeFixFinished(const QString &summary, bool success);
+    void learningStarted();
+    void learningStopped();
+    void startupSuggestionsReady(const QString &suggestions);
 
 private slots:
     void onModelReady(const QString &model);
@@ -74,6 +86,9 @@ private:
     SystemInfoTool m_systemInfoTool;
     PackageManager m_packageManager;
     CodeFixer m_codeFixer;
+    TaskTracker m_taskTracker;
+    ActivityAnalyzer m_activityAnalyzer;
+    SuggestionEngine m_suggestionEngine;
     bool m_autoFixEnabled{false};
     bool m_codeFixInProgress{false};
     QString m_projectDirectory;
