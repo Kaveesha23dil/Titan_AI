@@ -128,9 +128,19 @@ MainWindow::MainWindow(QWidget *parent)
     buildRow->addWidget(m_buildEdit, 1);
     buildRow->addWidget(m_buildFixButton);
 
+    m_organizeButton = new QPushButton(QStringLiteral("Organize && Find Duplicates"), fixerBox);
+    m_organizeButton->setToolTip(
+        QStringLiteral("Scan the project directory for duplicate files and get a suggested "
+                       "folder structure"));
+    auto *organizeRow = new QHBoxLayout;
+    organizeRow->addWidget(new QLabel(QStringLiteral("Files:"), fixerBox));
+    organizeRow->addWidget(m_organizeButton);
+    organizeRow->addStretch(1);
+
     fixerLayout->addLayout(checkRow);
     fixerLayout->addLayout(projectRow);
     fixerLayout->addLayout(buildRow);
+    fixerLayout->addLayout(organizeRow);
 
     m_notificationBanner = new QLabel(this);
     m_notificationBanner->setAlignment(Qt::AlignCenter);
@@ -194,6 +204,29 @@ MainWindow::MainWindow(QWidget *parent)
     });
     connect(m_browseButton, &QPushButton::clicked, this, &MainWindow::onBrowseProject);
     connect(m_buildFixButton, &QPushButton::clicked, this, &MainWindow::onBuildAndFixClicked);
+    connect(m_organizeButton, &QPushButton::clicked, this, &MainWindow::onOrganizeClicked);
+
+    FileOrganizer &organizer = m_agent.fileOrganizer();
+    connect(&organizer, &FileOrganizer::scanStarted, this,
+            [this](const QString &rootPath) {
+                m_organizeButton->setEnabled(false);
+                appendPlainLine(
+                    QStringLiteral("Scanning '%1' for duplicates and organization ideas...")
+                        .arg(rootPath),
+                    QStringLiteral("#6b7280"));
+            });
+    connect(&organizer, &FileOrganizer::scanFinished, this,
+            [this](int, int, quint64) {
+                m_organizeButton->setEnabled(true);
+                appendMessage(QStringLiteral("TitanAI"),
+                              m_agent.fileOrganizer().formatFullReport(),
+                              QStringLiteral("#4a90d9"));
+            });
+    connect(&organizer, &FileOrganizer::scanError, this,
+            [this](const QString &error) {
+                m_organizeButton->setEnabled(true);
+                appendMessage(QStringLiteral("Error"), error, QStringLiteral("#c0392b"));
+            });
     connect(&m_agent, &Agent::autoFixEnabledChanged, this, [this](bool enabled) {
         m_settings.setValue(QStringLiteral("autoFixEnabled"), enabled);
         const QSignalBlocker blocker(m_autoFixCheck);
@@ -417,6 +450,16 @@ void MainWindow::onBuildAndFixClicked()
     }
     setInputEnabled(false);
     m_agent.runBuildAndFix();
+}
+
+void MainWindow::onOrganizeClicked()
+{
+    if (m_agent.fileOrganizer().isScanning()) {
+        return;
+    }
+    const QString directory =
+        m_projectDirectory.isEmpty() ? QDir::homePath() : m_projectDirectory;
+    m_agent.fileOrganizer().startScan(directory);
 }
 
 void MainWindow::startStreamingBlock()

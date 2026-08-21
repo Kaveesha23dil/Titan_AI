@@ -8,6 +8,7 @@
 #include "llm/ollama_client.hpp"
 #include "llm/ollama_manager.hpp"
 #include "tools/code_fixer.hpp"
+#include "tools/file_organizer.hpp"
 #include "tools/package_manager.hpp"
 #include "tools/system_info.hpp"
 #include "learning/task_tracker.hpp"
@@ -45,6 +46,7 @@ public:
     void startCalendar();
     [[nodiscard]] CalendarManager &calendarManager();
     [[nodiscard]] NotificationManager &notificationManager();
+    [[nodiscard]] FileOrganizer &fileOrganizer();
 
 signals:
     void responseChunkReceived(const QString &chunk);
@@ -76,6 +78,7 @@ private:
     bool handleSystemInfoQuery(const QString &message);
     bool handleCameraQuery(const QString &message);
     bool handleCalendarQuery(const QString &message);
+    bool handleFileOrganizationQuery(const QString &message);
     bool handlePackageInstallQuery(const QString &message);
     bool handleAutoFixToggleQuery(const QString &message);
     bool handleCodeFixRequestQuery(const QString &message);
@@ -100,6 +103,7 @@ private:
     SuggestionEngine m_suggestionEngine;
     CalendarManager m_calendarManager;
     NotificationManager m_notificationManager;
+    FileOrganizer m_fileOrganizer;
     bool m_autoFixEnabled{false};
     bool m_codeFixInProgress{false};
     QString m_projectDirectory;

@@ -33,6 +33,7 @@ private slots:
     void onToolOutput(const QString &line);
     void onBrowseProject();
     void onBuildAndFixClicked();
+    void onOrganizeClicked();
 
     void onVoicePartial(const QString &text);
     void onVoiceFinal(const QString &text);
@@ -69,6 +70,7 @@ private:
     QPushButton *m_browseButton{nullptr};
     QLineEdit *m_buildEdit{nullptr};
     QPushButton *m_buildFixButton{nullptr};
+    QPushButton *m_organizeButton{nullptr};
     QPushButton *m_voiceButton{nullptr};
     QPushButton *m_voiceSettingsButton{nullptr};
     QLabel *m_voiceStatusLabel{nullptr};

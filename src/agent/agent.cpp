@@ -64,6 +64,10 @@ void Agent::sendMessage(const QString &message)
         return;
     }
 
+    if (handleFileOrganizationQuery(message)) {
+        return;
+    }
+
     if (handlePackageInstallQuery(message)) {
         return;
     }
@@ -815,6 +819,11 @@ NotificationManager &Agent::notificationManager()
     return m_notificationManager;
 }
 
+FileOrganizer &Agent::fileOrganizer()
+{
+    return m_fileOrganizer;
+}
+
 bool Agent::handleCalendarQuery(const QString &message)
 {
     const QString lower = message.toLower().simplified();
@@ -888,6 +897,108 @@ bool Agent::handleCalendarQuery(const QString &message)
     QTimer::singleShot(0, this, [this, response]() {
         emit responseReceived(response);
     });
+
+    return true;
+}
+
+bool Agent::handleFileOrganizationQuery(const QString &message)
+{
+    const QString lower = message.toLower().simplified();
+
+    static const QStringList informationalHints = {
+        QStringLiteral("how to"),
+        QStringLiteral("how do i"),
+        QStringLiteral("how can i"),
+        QStringLiteral("what is"),
+        QStringLiteral("explain"),
+        QStringLiteral("guide"),
+        QStringLiteral("tutorial"),
+    };
+    for (const QString &hint : informationalHints) {
+        if (lower.contains(hint)) {
+            return false;
+        }
+    }
+
+    const bool wantsDuplicates = lower.contains(QStringLiteral("duplicate")) ||
+                                 lower.contains(QStringLiteral("duplicates")) ||
+                                 lower.contains(QStringLiteral("dupe"));
+
+    const bool wantsStructure = lower.contains(QStringLiteral("folder structure")) ||
+                                lower.contains(QStringLiteral("directory structure")) ||
+                                lower.contains(QStringLiteral("organize")) ||
+                                lower.contains(QStringLiteral("organise")) ||
+                                lower.contains(QStringLiteral("tidy"));
+
+    if (!wantsDuplicates && !wantsStructure) {
+        return false;
+    }
+
+    static const QStringList fileContextWords = {
+        QStringLiteral("file"),      QStringLiteral("files"),
+        QStringLiteral("folder"),    QStringLiteral("folders"),
+        QStringLiteral("directory"), QStringLiteral("directories"),
+        QStringLiteral("project"),   QStringLiteral("downloads"),
+        QStringLiteral("documents"),
+    };
+    bool hasFileContext = false;
+    for (const QString &word : fileContextWords) {
+        if (lower.contains(word)) {
+            hasFileContext = true;
+            break;
+        }
+    }
+    if (!hasFileContext) {
+        return false;
+    }
+
+    if (m_fileOrganizer.isScanning()) {
+        emit responseReceived(
+            QStringLiteral("A file organization scan is already running. The report will appear "
+                           "here when it finishes."));
+        return true;
+    }
+
+    QString directory;
+
+    static const QRegularExpression pathRe(QStringLiteral("(/[~\\w./+-]+)"));
+    QRegularExpressionMatch match = pathRe.match(message);
+    if (match.hasMatch()) {
+        directory = match.captured(1);
+    } else {
+        static const QRegularExpression homeRe(QStringLiteral("(~/[\\w./+-]+)"));
+        QRegularExpressionMatch homeMatch = homeRe.match(message);
+        if (homeMatch.hasMatch()) {
+            directory = QDir::homePath() + homeMatch.captured(1).mid(1);
+        }
+    }
+
+    if (!directory.isEmpty()) {
+        while (directory.size() > 1 && directory.endsWith(QLatin1Char('/'))) {
+            directory.chop(1);
+        }
+        static const QRegularExpression trailingPunctRe(QStringLiteral("[.,!?;:]+$"));
+        directory.remove(trailingPunctRe);
+
+        if (!QDir(directory).exists()) {
+            emit errorOccurred(
+                QStringLiteral("Directory not found: %1. Set a valid Project path or mention an "
+                               "existing directory.")
+                    .arg(directory));
+            return true;
+        }
+    } else if (!m_projectDirectory.isEmpty()) {
+        directory = m_projectDirectory;
+    } else {
+        directory = QDir::homePath();
+    }
+
+    m_fileOrganizer.startScan(directory);
+
+    emit responseReceived(
+        QStringLiteral("Scanning '%1' for duplicate files and organization ideas. "
+                       "The full report will appear here shortly.")
+            .arg(directory));
 
     return true;
 }
