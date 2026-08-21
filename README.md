@@ -34,6 +34,22 @@ vision-capable local model (the default model `gemma3:4b` supports images):
 The image is downscaled and compressed before being sent to the model, and a thumbnail
 of every analyzed image is shown in the chat.
 
+## File Organization
+
+TitanAI can help you tidy up messy folders. It works fully offline on any directory:
+
+- Click **Organize && Find Duplicates** (uses the Project directory, or your home folder
+  if none is set), or just ask in the chat:
+  - *"find duplicate files in /home/you/Downloads"*
+  - *"suggest a folder structure for my files"*
+- **Duplicate detection** compares file contents with SHA-256 (files are first grouped by
+  size so only real candidates are hashed) and reports every group of identical files
+  together with the wasted disk space.
+- **Folder suggestions** categorize your files by type (Documents, Images, Videos, Audio,
+  Archives, Code, Data, Fonts, Misc) and propose a clean folder layout.
+
+Suggestions are previews only — TitanAI never moves or deletes files on its own.
+
 ## Voice Features
 
 TitanAI includes a fully local voice assistant built on top of the chat GUI:
