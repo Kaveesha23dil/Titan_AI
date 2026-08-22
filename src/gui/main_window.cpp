@@ -8,160 +8,840 @@
 #include <QDir>
 #include <QFileDialog>
 #include <QFont>
+#include <QFontDatabase>
+#include <QGraphicsDropShadowEffect>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
+#include <QPainter>
+#include <QPainterPath>
+#include <QPixmap>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QScrollBar>
 #include <QSignalBlocker>
+#include <QStackedWidget>
 #include <QTextBrowser>
+#include <QTimer>
 #include <QVBoxLayout>
 
-MainWindow::MainWindow(QWidget *parent)
-    : QMainWindow(parent)
-    , m_chatDisplay(new QTextBrowser(this))
-    , m_input(new QLineEdit(this))
-    , m_sendButton(new QPushButton(QStringLiteral("Send"), this))
-    , m_statusLabel(new QLabel(QStringLiteral("Initializing local AI model..."), this))
-{
-    setWindowTitle(QStringLiteral("TitanAI"));
-    resize(680, 520);
+// ─────────────────────────────────────────────────────────────
+//  Colour tokens  (dark theme)
+// ─────────────────────────────────────────────────────────────
+namespace Col {
+constexpr auto BgDeep      = "#0b0f19";
+constexpr auto BgSidebar   = "#070a13";
+constexpr auto BgCard      = "#111827";
+constexpr auto BgCardHover = "#1a2236";
+constexpr auto BgInput     = "#0f1629";
+constexpr auto Border      = "#1e293b";
+constexpr auto BorderLight = "#2a3a52";
+constexpr auto Accent      = "#6366f1";   // Indigo
+constexpr auto AccentGlow  = "#818cf8";
+constexpr auto AccentCyan  = "#22d3ee";
+constexpr auto TextPrimary = "#f1f5f9";
+constexpr auto TextSecondary = "#94a3b8";
+constexpr auto TextMuted   = "#64748b";
+constexpr auto Danger      = "#ef4444";
+constexpr auto Success     = "#22c55e";
+constexpr auto Warning     = "#f59e0b";
+constexpr auto InfoBg      = "#1e1b4b";
+}
 
+// ─────────────────────────────────────────────────────────────
+//  Vector icon factory (QPainter-based, DPI-independent)
+// ─────────────────────────────────────────────────────────────
+QIcon MainWindow::createVectorIcon(const QString &name, int size)
+{
+    QPixmap pm(size, size);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing, true);
+
+    QPen pen(QColor(Col::TextSecondary), 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+    p.setPen(pen);
+    p.setBrush(Qt::NoBrush);
+
+    const qreal s = size;
+    const qreal m = s * 0.18;  // margin
+
+    if (name == QLatin1String("home")) {
+        // House outline
+        QPainterPath path;
+        path.moveTo(s / 2, m);
+        path.lineTo(s - m, s * 0.45);
+        path.lineTo(s - m, s - m);
+        path.lineTo(m, s - m);
+        path.lineTo(m, s * 0.45);
+        path.closeSubpath();
+        p.drawPath(path);
+        // Door
+        p.drawRect(QRectF(s * 0.38, s * 0.58, s * 0.24, s - m - s * 0.58));
+    } else if (name == QLatin1String("chat")) {
+        // Speech bubble
+        QRectF r(m, m, s - 2 * m, (s - 2 * m) * 0.78);
+        p.drawRoundedRect(r, 4, 4);
+        // Tail
+        QPainterPath tail;
+        tail.moveTo(s * 0.28, r.bottom());
+        tail.lineTo(s * 0.22, s - m);
+        tail.lineTo(s * 0.42, r.bottom());
+        p.drawPath(tail);
+    } else if (name == QLatin1String("dev")) {
+        // Code brackets  < / >
+        p.drawLine(QPointF(s * 0.30, m), QPointF(m, s / 2));
+        p.drawLine(QPointF(m, s / 2), QPointF(s * 0.30, s - m));
+        p.drawLine(QPointF(s * 0.70, m), QPointF(s - m, s / 2));
+        p.drawLine(QPointF(s - m, s / 2), QPointF(s * 0.70, s - m));
+        p.drawLine(QPointF(s * 0.55, m * 0.7), QPointF(s * 0.45, s - m * 0.7));
+    } else if (name == QLatin1String("calendar")) {
+        QRectF r(m, m + 2, s - 2 * m, s - 2 * m - 2);
+        p.drawRoundedRect(r, 3, 3);
+        p.drawLine(QPointF(m, m + (s - 2 * m) * 0.32 + 2), QPointF(s - m, m + (s - 2 * m) * 0.32 + 2));
+        p.drawLine(QPointF(s * 0.35, m), QPointF(s * 0.35, m - 2));
+        p.drawLine(QPointF(s * 0.65, m), QPointF(s * 0.65, m - 2));
+    } else if (name == QLatin1String("settings")) {
+        // Gear
+        qreal cx = s / 2, cy = s / 2, r1 = s * 0.2, r2 = s * 0.34;
+        p.drawEllipse(QPointF(cx, cy), r1, r1);
+        for (int i = 0; i < 8; ++i) {
+            qreal angle = i * 45.0 * M_PI / 180.0;
+            p.drawLine(QPointF(cx + r1 * 0.85 * std::cos(angle), cy + r1 * 0.85 * std::sin(angle)),
+                       QPointF(cx + r2 * std::cos(angle), cy + r2 * std::sin(angle)));
+        }
+    } else if (name == QLatin1String("mic")) {
+        // Microphone
+        QRectF mic(s * 0.36, m, s * 0.28, s * 0.45);
+        p.drawRoundedRect(mic, mic.width() / 2, mic.width() / 2);
+        p.drawArc(QRectF(s * 0.24, s * 0.2, s * 0.52, s * 0.48), 0, -180 * 16);
+        p.drawLine(QPointF(s / 2, s * 0.68), QPointF(s / 2, s - m));
+        p.drawLine(QPointF(s * 0.35, s - m), QPointF(s * 0.65, s - m));
+    } else if (name == QLatin1String("camera")) {
+        QRectF body(m, s * 0.3, s - 2 * m, s * 0.5);
+        p.drawRoundedRect(body, 3, 3);
+        p.drawEllipse(QPointF(s / 2, s * 0.55), s * 0.13, s * 0.13);
+        QPainterPath lens;
+        lens.moveTo(s * 0.35, s * 0.3);
+        lens.lineTo(s * 0.40, s * 0.2);
+        lens.lineTo(s * 0.60, s * 0.2);
+        lens.lineTo(s * 0.65, s * 0.3);
+        p.drawPath(lens);
+    } else if (name == QLatin1String("image")) {
+        QRectF r(m, m, s - 2 * m, s - 2 * m);
+        p.drawRoundedRect(r, 3, 3);
+        p.drawEllipse(QPointF(s * 0.35, s * 0.35), s * 0.08, s * 0.08);
+        QPainterPath mount;
+        mount.moveTo(m, s * 0.72);
+        mount.lineTo(s * 0.35, s * 0.48);
+        mount.lineTo(s * 0.55, s * 0.62);
+        mount.lineTo(s * 0.68, s * 0.52);
+        mount.lineTo(s - m, s * 0.72);
+        p.drawPath(mount);
+    } else if (name == QLatin1String("send")) {
+        pen.setColor(QColor(Col::Accent));
+        p.setPen(pen);
+        QPainterPath arrow;
+        arrow.moveTo(m, s - m);
+        arrow.lineTo(s - m, s / 2);
+        arrow.lineTo(m, m);
+        arrow.lineTo(s * 0.3, s / 2);
+        arrow.closeSubpath();
+        p.fillPath(arrow, QColor(Col::Accent));
+        p.drawPath(arrow);
+    } else if (name == QLatin1String("organize")) {
+        QRectF r(m, m + 3, s - 2 * m, s - 2 * m - 3);
+        p.drawRoundedRect(r, 3, 3);
+        p.drawLine(QPointF(m, m + 3 + (s - 2 * m - 3) * 0.22), QPointF(s * 0.42, m + 3 + (s - 2 * m - 3) * 0.22));
+        p.drawLine(QPointF(m, m + 3), QPointF(m + (s - 2 * m) * 0.3, m + 3));
+    } else if (name == QLatin1String("voice_settings")) {
+        // Sliders icon
+        for (int i = 0; i < 3; ++i) {
+            qreal y = m + (s - 2 * m) * (0.2 + i * 0.3);
+            p.drawLine(QPointF(m, y), QPointF(s - m, y));
+            qreal kx = m + (s - 2 * m) * (0.3 + i * 0.2);
+            p.setBrush(QColor(Col::TextSecondary));
+            p.drawEllipse(QPointF(kx, y), 2.5, 2.5);
+            p.setBrush(Qt::NoBrush);
+        }
+    }
+
+    p.end();
+    return QIcon(pm);
+}
+
+// ─────────────────────────────────────────────────────────────
+//  Global Dark QSS
+// ─────────────────────────────────────────────────────────────
+void MainWindow::setupGlobalStylesheet()
+{
+    const QString qss = QStringLiteral(
+        // --- Main Window ---
+        "QMainWindow { background: %1; }"
+
+        // --- Labels ---
+        "QLabel { color: %2; }"
+
+        // --- QLineEdit ---
+        "QLineEdit { "
+        "  background: %3; color: %2; border: 1px solid %4; "
+        "  border-radius: 8px; padding: 10px 14px; font-size: 14px; "
+        "}"
+        "QLineEdit:focus { border-color: %5; }"
+        "QLineEdit::placeholder { color: %6; }"
+
+        // --- QPushButton (default) ---
+        "QPushButton { "
+        "  background: %7; color: %2; border: 1px solid %4; "
+        "  border-radius: 8px; padding: 8px 16px; font-size: 13px; font-weight: 500; "
+        "}"
+        "QPushButton:hover { background: %8; border-color: %9; }"
+        "QPushButton:pressed { background: %5; }"
+        "QPushButton:disabled { color: %6; background: %3; border-color: %4; }"
+
+        // --- QCheckBox ---
+        "QCheckBox { color: %2; font-size: 13px; spacing: 8px; }"
+        "QCheckBox::indicator { width: 18px; height: 18px; border-radius: 4px; "
+        "  border: 1px solid %4; background: %3; }"
+        "QCheckBox::indicator:checked { background: %5; border-color: %5; }"
+
+        // --- QGroupBox ---
+        "QGroupBox { "
+        "  color: %2; font-size: 14px; font-weight: 600; "
+        "  border: 1px solid %4; border-radius: 12px; "
+        "  margin-top: 12px; padding: 20px 16px 16px 16px; "
+        "  background: %7; "
+        "}"
+        "QGroupBox::title { subcontrol-origin: margin; left: 16px; padding: 0 6px; }"
+
+        // --- QTextBrowser (Chat display) ---
+        "QTextBrowser { "
+        "  background: %1; color: %2; border: none; "
+        "  font-size: 14px; padding: 12px; selection-background-color: %5; "
+        "}"
+
+        // --- QScrollBar Vertical ---
+        "QScrollBar:vertical { background: transparent; width: 8px; margin: 0; }"
+        "QScrollBar::handle:vertical { background: %4; border-radius: 4px; min-height: 30px; }"
+        "QScrollBar::handle:vertical:hover { background: %9; }"
+        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
+        "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }"
+
+        // --- QProgressBar (mic level) ---
+        "QProgressBar { "
+        "  border: 1px solid %4; border-radius: 4px; background: %3; "
+        "}"
+        "QProgressBar::chunk { background: %5; border-radius: 4px; }"
+
+        // --- QMessageBox ---
+        "QMessageBox { background: %7; }"
+        "QMessageBox QLabel { color: %2; }"
+        "QMessageBox QPushButton { min-width: 80px; }"
+    ).arg(
+        Col::BgDeep,        // %1
+        Col::TextPrimary,   // %2
+        Col::BgInput,       // %3
+        Col::Border,        // %4
+        Col::Accent,        // %5
+        Col::TextMuted,     // %6
+        Col::BgCard,        // %7
+        Col::BgCardHover,   // %8
+        Col::BorderLight    // %9
+    );
+    setStyleSheet(qss);
+}
+
+// ─────────────────────────────────────────────────────────────
+//  Sidebar
+// ─────────────────────────────────────────────────────────────
+QWidget *MainWindow::createSidebar()
+{
+    auto *sidebar = new QWidget(this);
+    sidebar->setFixedWidth(64);
+    sidebar->setStyleSheet(QStringLiteral(
+        "QWidget { background: %1; } "
+        "QPushButton { "
+        "  background: transparent; border: none; border-radius: 12px; "
+        "  padding: 10px; min-width: 40px; min-height: 40px; max-width: 40px; max-height: 40px; "
+        "} "
+        "QPushButton:hover { background: rgba(99,102,241,0.15); } "
+        "QPushButton:checked { background: rgba(99,102,241,0.25); border: 1px solid rgba(99,102,241,0.4); } "
+    ).arg(Col::BgSidebar));
+
+    auto *layout = new QVBoxLayout(sidebar);
+    layout->setContentsMargins(12, 16, 12, 16);
+    layout->setSpacing(6);
+
+    // Logo
+    auto *logo = new QLabel(QStringLiteral("T"), sidebar);
+    logo->setAlignment(Qt::AlignCenter);
+    logo->setFixedSize(40, 40);
+    logo->setStyleSheet(QStringLiteral(
+        "QLabel { "
+        "  background: qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 %1,stop:1 %2); "
+        "  color: white; font-size: 18px; font-weight: 800; "
+        "  border-radius: 12px; "
+        "}"
+    ).arg(Col::Accent, Col::AccentCyan));
+    layout->addWidget(logo, 0, Qt::AlignHCenter);
+    layout->addSpacing(20);
+
+    // Navigation buttons
+    auto makeNavBtn = [&](const QString &iconName, const QString &tooltip) {
+        auto *btn = new QPushButton(sidebar);
+        btn->setIcon(createVectorIcon(iconName, 22));
+        btn->setIconSize(QSize(22, 22));
+        btn->setToolTip(tooltip);
+        btn->setCheckable(true);
+        btn->setFocusPolicy(Qt::NoFocus);
+        layout->addWidget(btn, 0, Qt::AlignHCenter);
+        return btn;
+    };
+
+    m_navHome = makeNavBtn(QStringLiteral("home"), QStringLiteral("Home"));
+    m_navChat = makeNavBtn(QStringLiteral("chat"), QStringLiteral("Chat"));
+    m_navDev  = makeNavBtn(QStringLiteral("dev"),  QStringLiteral("Developer Hub"));
+    m_navCalendar = makeNavBtn(QStringLiteral("calendar"), QStringLiteral("Calendar Settings"));
+
+    m_navHome->setChecked(true);
+
+    layout->addStretch(1);
+
+    // Bottom utility buttons
+    m_navVoiceSettings = makeNavBtn(QStringLiteral("voice_settings"), QStringLiteral("Voice Settings"));
+    m_navVoiceSettings->setCheckable(false);
+    m_navSettings = makeNavBtn(QStringLiteral("settings"), QStringLiteral("Settings"));
+    m_navSettings->setCheckable(false);
+
+    // Connect navigation
+    connect(m_navHome, &QPushButton::clicked, this, [this]() { navigateTo(0); });
+    connect(m_navChat, &QPushButton::clicked, this, [this]() { navigateTo(1); });
+    connect(m_navDev,  &QPushButton::clicked, this, [this]() { navigateTo(2); });
+    connect(m_navCalendar, &QPushButton::clicked, this, &MainWindow::onOpenCalendarSettings);
+    connect(m_navVoiceSettings, &QPushButton::clicked, this, &MainWindow::onVoiceSettings);
+
+    return sidebar;
+}
+
+// ─────────────────────────────────────────────────────────────
+//  Welcome (Home) Page
+// ─────────────────────────────────────────────────────────────
+QWidget *MainWindow::createWelcomePage()
+{
+    auto *page = new QWidget(this);
+    auto *layout = new QVBoxLayout(page);
+    layout->setContentsMargins(40, 30, 40, 30);
+    layout->setSpacing(0);
+
+    layout->addStretch(2);
+
+    // Orb image
+    auto *orbLabel = new QLabel(page);
+    QPixmap orbPix(QStringLiteral(":/assets/orb.jpg"));
+    if (!orbPix.isNull()) {
+        // Create circular mask
+        int dim = 160;
+        QPixmap scaled = orbPix.scaled(dim, dim, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+        QPixmap circular(dim, dim);
+        circular.fill(Qt::transparent);
+        QPainter painter(&circular);
+        painter.setRenderHint(QPainter::Antialiasing);
+        QPainterPath path;
+        path.addEllipse(0, 0, dim, dim);
+        painter.setClipPath(path);
+        painter.drawPixmap(0, 0, scaled);
+        painter.end();
+        orbLabel->setPixmap(circular);
+    }
+    orbLabel->setAlignment(Qt::AlignCenter);
+    orbLabel->setFixedHeight(170);
+    layout->addWidget(orbLabel);
+    layout->addSpacing(20);
+
+    // Greeting
+    m_welcomeGreeting = new QLabel(QStringLiteral("Hi there 👋"), page);
+    m_welcomeGreeting->setAlignment(Qt::AlignCenter);
+    m_welcomeGreeting->setStyleSheet(QStringLiteral(
+        "QLabel { color: %1; font-size: 22px; font-weight: 400; }").arg(Col::TextSecondary));
+    layout->addWidget(m_welcomeGreeting);
+    layout->addSpacing(4);
+
+    // Main title
+    auto *title = new QLabel(QStringLiteral("How can I help today?"), page);
+    title->setAlignment(Qt::AlignCenter);
+    title->setStyleSheet(QStringLiteral(
+        "QLabel { color: %1; font-size: 32px; font-weight: 700; }").arg(Col::TextPrimary));
+    layout->addWidget(title);
+    layout->addSpacing(6);
+
+    // Subtitle
+    m_welcomeSubtitle = new QLabel(
+        QStringLiteral("I'm here to help — from system queries\nto smart recommendations."), page);
+    m_welcomeSubtitle->setAlignment(Qt::AlignCenter);
+    m_welcomeSubtitle->setStyleSheet(QStringLiteral(
+        "QLabel { color: %1; font-size: 14px; }").arg(Col::TextMuted));
+    layout->addWidget(m_welcomeSubtitle);
+    layout->addSpacing(28);
+
+    // Input card slot
+    m_welcomeInputSlot = new QVBoxLayout;
+    m_welcomeInputSlot->setContentsMargins(0, 0, 0, 0);
+    layout->addLayout(m_welcomeInputSlot);
+    layout->addSpacing(30);
+
+    // Suggestion cards row
+    auto *suggestionsRow = new QHBoxLayout;
+    suggestionsRow->setSpacing(12);
+
+    struct SuggestionDef {
+        QString emoji;
+        QString title;
+        QString description;
+        QString prompt;
+    };
+
+    const QList<SuggestionDef> suggestions = {
+        {QStringLiteral("🖥️"), QStringLiteral("System Info"),
+         QStringLiteral("Get detailed info about\nyour Arch Linux system."),
+         QStringLiteral("Show me my system info")},
+        {QStringLiteral("📦"), QStringLiteral("Install Package"),
+         QStringLiteral("Install any package using\npacman or AUR helpers."),
+         QStringLiteral("Install ")},
+        {QStringLiteral("🔧"), QStringLiteral("Fix Build Errors"),
+         QStringLiteral("Auto-detect and fix code\nbuild errors locally."),
+         QStringLiteral("Fix my build errors")},
+        {QStringLiteral("📁"), QStringLiteral("Organize Files"),
+         QStringLiteral("Find duplicates and get\nfolder structure ideas."),
+         QStringLiteral("Find duplicate files in my project")},
+    };
+
+    for (const auto &sg : suggestions) {
+        auto *card = new QPushButton(page);
+        card->setFocusPolicy(Qt::NoFocus);
+        card->setCursor(Qt::PointingHandCursor);
+
+        auto *cardLayout = new QVBoxLayout(card);
+        cardLayout->setContentsMargins(16, 16, 16, 16);
+        cardLayout->setSpacing(6);
+
+        auto *emojiLabel = new QLabel(sg.emoji, card);
+        emojiLabel->setStyleSheet(QStringLiteral("font-size: 22px; background: transparent; border: none;"));
+        emojiLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
+        cardLayout->addWidget(emojiLabel);
+
+        auto *titleLabel = new QLabel(sg.title, card);
+        titleLabel->setStyleSheet(QStringLiteral(
+            "QLabel { color: %1; font-size: 14px; font-weight: 600; background: transparent; border: none; }").arg(Col::TextPrimary));
+        titleLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
+        cardLayout->addWidget(titleLabel);
+
+        auto *descLabel = new QLabel(sg.description, card);
+        descLabel->setStyleSheet(QStringLiteral(
+            "QLabel { color: %1; font-size: 12px; background: transparent; border: none; }").arg(Col::TextMuted));
+        descLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
+        cardLayout->addWidget(descLabel);
+        cardLayout->addStretch();
+
+        card->setMinimumHeight(120);
+        card->setStyleSheet(QStringLiteral(
+            "QPushButton { "
+            "  background: %1; border: 1px solid %2; border-radius: 14px; "
+            "  text-align: left; "
+            "} "
+            "QPushButton:hover { background: %3; border-color: %4; }"
+        ).arg(Col::BgCard, Col::Border, Col::BgCardHover, Col::BorderLight));
+
+        connect(card, &QPushButton::clicked, this, [this, prompt = sg.prompt]() {
+            navigateTo(1);
+            m_input->setText(prompt);
+            m_input->setFocus();
+            if (prompt == QStringLiteral("Install ")) {
+                // Position cursor after "Install " for user to type package name
+                m_input->setCursorPosition(m_input->text().length());
+            } else {
+                onSendClicked();
+            }
+        });
+
+        suggestionsRow->addWidget(card, 1);
+    }
+
+    layout->addLayout(suggestionsRow);
+    layout->addStretch(1);
+
+    return page;
+}
+
+// ─────────────────────────────────────────────────────────────
+//  Chat Page
+// ─────────────────────────────────────────────────────────────
+QWidget *MainWindow::createChatPage()
+{
+    auto *page = new QWidget(this);
+    auto *layout = new QVBoxLayout(page);
+    layout->setContentsMargins(20, 16, 20, 16);
+    layout->setSpacing(8);
+
+    // Status bar
+    m_statusLabel = new QLabel(QStringLiteral("Initializing local AI model..."), page);
+    m_statusLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    m_statusLabel->setStyleSheet(QStringLiteral(
+        "QLabel { color: %1; font-size: 11px; padding: 4px 8px; "
+        "background: %2; border-radius: 6px; }").arg(Col::TextMuted, Col::BgCard));
+    m_statusLabel->setFixedHeight(28);
+    layout->addWidget(m_statusLabel);
+
+    // Chat display
+    m_chatDisplay = new QTextBrowser(page);
     m_chatDisplay->setReadOnly(true);
     m_chatDisplay->setOpenExternalLinks(false);
+    m_chatDisplay->setFrameShape(QFrame::NoFrame);
+    layout->addWidget(m_chatDisplay, 1);
 
-    auto *header = new QLabel(QStringLiteral("TitanAI - Local AI Assistant"), this);
-    header->setAlignment(Qt::AlignCenter);
-    QFont headerFont = header->font();
-    headerFont.setBold(true);
-    headerFont.setPointSize(headerFont.pointSize() + 4);
-    header->setFont(headerFont);
+    // Notification banner
+    m_notificationBanner = new QLabel(page);
+    m_notificationBanner->setAlignment(Qt::AlignCenter);
+    m_notificationBanner->setWordWrap(true);
+    m_notificationBanner->setStyleSheet(QStringLiteral(
+        "QLabel { background: %1; border: 1px solid %2; border-radius: 8px; "
+        "padding: 10px 14px; color: %3; font-size: 12px; }"
+    ).arg(Col::InfoBg, Col::Accent, Col::AccentGlow));
+    m_notificationBanner->setVisible(false);
+    m_notificationBanner->setTextFormat(Qt::RichText);
+    layout->addWidget(m_notificationBanner);
 
-    m_statusLabel->setAlignment(Qt::AlignCenter);
-    m_statusLabel->setStyleSheet(QStringLiteral("color: #666; font-size: 11px;"));
+    // Voice status row
+    m_voiceStatusLabel = new QLabel(QStringLiteral("Voice disabled"), page);
+    m_voiceStatusLabel->setStyleSheet(QStringLiteral(
+        "QLabel { color: %1; font-size: 10px; }").arg(Col::TextMuted));
 
-    m_input->setPlaceholderText(QStringLiteral("Type a message... (Enter to send)"));
-    m_input->setMinimumHeight(32);
-
-    m_voiceButton = new QPushButton(QStringLiteral("Mic"), this);
-    m_voiceButton->setCheckable(true);
-    m_voiceButton->setToolTip(QStringLiteral("Start / stop voice input (push-to-talk style)"));
-    m_voiceButton->setEnabled(false);
-
-    m_voiceSettingsButton = new QPushButton(QStringLiteral("Voice Settings"), this);
-    m_voiceSettingsButton->setToolTip(QStringLiteral("Configure voice input and spoken replies"));
-
-    m_voiceStatusLabel = new QLabel(QStringLiteral("Voice disabled"), this);
-    m_voiceStatusLabel->setStyleSheet(QStringLiteral("color:#6b7280; font-size:10px;"));
-
-    m_micLevelBar = new QProgressBar(this);
+    m_micLevelBar = new QProgressBar(page);
     m_micLevelBar->setRange(0, 100);
     m_micLevelBar->setValue(0);
     m_micLevelBar->setTextVisible(false);
     m_micLevelBar->setFixedWidth(120);
-    m_micLevelBar->setFixedHeight(10);
-    m_micLevelBar->setStyleSheet(
-        QStringLiteral("QProgressBar{border:1px solid #cbd5e1;border-radius:4px;"
-                       "background:#f1f5f9;} QProgressBar::chunk{background:#4a90d9;"
-                       "border-radius:4px;}"));
+    m_micLevelBar->setFixedHeight(6);
     m_micLevelBar->hide();
 
     auto *voiceStatusRow = new QHBoxLayout;
     voiceStatusRow->addWidget(m_voiceStatusLabel);
     voiceStatusRow->addStretch(1);
     voiceStatusRow->addWidget(m_micLevelBar);
+    layout->addLayout(voiceStatusRow);
 
-    m_cameraButton = new QPushButton(QStringLiteral("Camera"), this);
-    m_cameraButton->setToolTip(QStringLiteral("Open the camera to capture an image for analysis"));
-    m_imageButton = new QPushButton(QStringLiteral("Image"), this);
-    m_imageButton->setToolTip(QStringLiteral("Choose an image file to analyze"));
-    m_calendarButton = new QPushButton(QStringLiteral("Calendar"), this);
-    m_calendarButton->setToolTip(QStringLiteral("Manage calendar files and notification settings"));
+    // Chat input slot
+    m_chatInputSlot = new QVBoxLayout;
+    m_chatInputSlot->setContentsMargins(0, 0, 0, 0);
+    layout->addLayout(m_chatInputSlot);
 
-    auto *inputRow = new QHBoxLayout;
-    inputRow->addWidget(m_input, 1);
-    inputRow->addWidget(m_voiceButton);
-    inputRow->addWidget(m_voiceSettingsButton);
-    inputRow->addWidget(m_cameraButton);
-    inputRow->addWidget(m_imageButton);
-    inputRow->addWidget(m_calendarButton);
-    inputRow->addWidget(m_sendButton);
+    return page;
+}
 
-    m_pendingImageLabel = new QLabel(this);
-    m_pendingImageLabel->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
-    m_pendingImageLabel->setStyleSheet(QStringLiteral("color:#4a90d9; font-size:11px;"));
-    m_pendingImageLabel->setTextFormat(Qt::RichText);
-    m_pendingImageLabel->setVisible(false);
+// ─────────────────────────────────────────────────────────────
+//  Developer Hub Page
+// ─────────────────────────────────────────────────────────────
+QWidget *MainWindow::createDevHubPage()
+{
+    auto *page = new QWidget(this);
+    auto *layout = new QVBoxLayout(page);
+    layout->setContentsMargins(40, 30, 40, 30);
+    layout->setSpacing(20);
 
-    m_clearImageButton = new QPushButton(QStringLiteral("Clear image"), this);
-    m_clearImageButton->setVisible(false);
+    // Page header
+    auto *header = new QLabel(QStringLiteral("🛠  Developer Hub"), page);
+    header->setStyleSheet(QStringLiteral(
+        "QLabel { color: %1; font-size: 24px; font-weight: 700; }").arg(Col::TextPrimary));
+    layout->addWidget(header);
 
-    auto *pendingImageRow = new QHBoxLayout;
-    pendingImageRow->addWidget(m_pendingImageLabel);
-    pendingImageRow->addStretch(1);
-    pendingImageRow->addWidget(m_clearImageButton);
+    auto *subtitle = new QLabel(
+        QStringLiteral("Configure auto-fix, build commands, and file organization tools."), page);
+    subtitle->setStyleSheet(QStringLiteral(
+        "QLabel { color: %1; font-size: 14px; }").arg(Col::TextMuted));
+    layout->addWidget(subtitle);
+    layout->addSpacing(10);
 
-    auto *fixerBox = new QGroupBox(QStringLiteral("Developer Auto-Fix"), this);
+    // Auto-Fix section
+    auto *fixerBox = new QGroupBox(QStringLiteral("Auto-Fix Code Errors"), page);
     auto *fixerLayout = new QVBoxLayout(fixerBox);
+    fixerLayout->setSpacing(12);
 
-    m_autoFixCheck = new QCheckBox(QStringLiteral("Auto-fix code errors"), fixerBox);
-    auto *checkRow = new QHBoxLayout;
-    checkRow->addWidget(m_autoFixCheck);
-    checkRow->addStretch(1);
+    m_autoFixCheck = new QCheckBox(QStringLiteral("Enable automatic code-error fixing"), fixerBox);
+    fixerLayout->addWidget(m_autoFixCheck);
 
+    // Project directory
+    auto *projectRow = new QHBoxLayout;
+    auto *projectLabel = new QLabel(QStringLiteral("Project:"), fixerBox);
+    projectLabel->setFixedWidth(60);
     m_projectEdit = new QLineEdit(fixerBox);
     m_projectEdit->setPlaceholderText(QStringLiteral("e.g. /home/you/my-project"));
     m_browseButton = new QPushButton(QStringLiteral("Browse"), fixerBox);
-    auto *projectRow = new QHBoxLayout;
-    projectRow->addWidget(new QLabel(QStringLiteral("Project:"), fixerBox));
+    projectRow->addWidget(projectLabel);
     projectRow->addWidget(m_projectEdit, 1);
     projectRow->addWidget(m_browseButton);
+    fixerLayout->addLayout(projectRow);
 
-    m_buildEdit = new QLineEdit(fixerBox);
-    m_buildEdit->setPlaceholderText(QStringLiteral("e.g. cmake --build build   or   npm run build"));
-    m_buildFixButton = new QPushButton(QStringLiteral("Build && Fix"), fixerBox);
+    // Build command
     auto *buildRow = new QHBoxLayout;
-    buildRow->addWidget(new QLabel(QStringLiteral("Build:"), fixerBox));
+    auto *buildLabel = new QLabel(QStringLiteral("Build:"), fixerBox);
+    buildLabel->setFixedWidth(60);
+    m_buildEdit = new QLineEdit(fixerBox);
+    m_buildEdit->setPlaceholderText(QStringLiteral("e.g. cmake --build build  or  npm run build"));
+    m_buildFixButton = new QPushButton(QStringLiteral("Build && Fix"), fixerBox);
+    m_buildFixButton->setStyleSheet(QStringLiteral(
+        "QPushButton { background: %1; color: white; border: none; font-weight: 600; } "
+        "QPushButton:hover { background: %2; }"
+    ).arg(Col::Accent, Col::AccentGlow));
+    buildRow->addWidget(buildLabel);
     buildRow->addWidget(m_buildEdit, 1);
     buildRow->addWidget(m_buildFixButton);
-
-    m_organizeButton = new QPushButton(QStringLiteral("Organize && Find Duplicates"), fixerBox);
-    m_organizeButton->setToolTip(
-        QStringLiteral("Scan the project directory for duplicate files and get a suggested "
-                       "folder structure"));
-    auto *organizeRow = new QHBoxLayout;
-    organizeRow->addWidget(new QLabel(QStringLiteral("Files:"), fixerBox));
-    organizeRow->addWidget(m_organizeButton);
-    organizeRow->addStretch(1);
-
-    fixerLayout->addLayout(checkRow);
-    fixerLayout->addLayout(projectRow);
     fixerLayout->addLayout(buildRow);
-    fixerLayout->addLayout(organizeRow);
 
-    m_notificationBanner = new QLabel(this);
-    m_notificationBanner->setAlignment(Qt::AlignCenter);
-    m_notificationBanner->setWordWrap(true);
-    m_notificationBanner->setStyleSheet(
-        QStringLiteral("QLabel { background: #e8f4fd; border: 1px solid #b3d9f2; border-radius: 4px;"
-                       "padding: 6px; color: #1a5276; font-size: 12px; }"));
-    m_notificationBanner->setVisible(false);
-    m_notificationBanner->setTextFormat(Qt::RichText);
-
-    auto *central = new QWidget(this);
-    auto *layout = new QVBoxLayout(central);
-    layout->addWidget(header);
-    layout->addWidget(m_statusLabel);
-    layout->addWidget(m_notificationBanner);
     layout->addWidget(fixerBox);
-    layout->addWidget(m_chatDisplay, 1);
-    layout->addLayout(voiceStatusRow);
-    layout->addLayout(pendingImageRow);
-    layout->addLayout(inputRow);
+
+    // File Organization section
+    auto *organizeBox = new QGroupBox(QStringLiteral("File Organization"), page);
+    auto *organizeLayout = new QVBoxLayout(organizeBox);
+    organizeLayout->setSpacing(12);
+
+    auto *organizeDesc = new QLabel(
+        QStringLiteral("Scan a directory for duplicate files (SHA-256) and get folder structure suggestions."),
+        organizeBox);
+    organizeDesc->setWordWrap(true);
+    organizeDesc->setStyleSheet(QStringLiteral("QLabel { color: %1; font-size: 13px; }").arg(Col::TextSecondary));
+    organizeLayout->addWidget(organizeDesc);
+
+    m_organizeButton = new QPushButton(QStringLiteral("  Organize && Find Duplicates"), organizeBox);
+    m_organizeButton->setIcon(createVectorIcon(QStringLiteral("organize"), 20));
+    m_organizeButton->setToolTip(
+        QStringLiteral("Scan the project directory for duplicate files and get a suggested folder structure"));
+    m_organizeButton->setStyleSheet(QStringLiteral(
+        "QPushButton { background: %1; color: white; border: none; font-weight: 600; padding: 10px 20px; } "
+        "QPushButton:hover { background: %2; }"
+    ).arg(Col::Accent, Col::AccentGlow));
+    organizeLayout->addWidget(m_organizeButton, 0, Qt::AlignLeft);
+
+    layout->addWidget(organizeBox);
+    layout->addStretch(1);
+
+    return page;
+}
+
+// ─────────────────────────────────────────────────────────────
+//  Shared Input Card (glassmorphism prompt bar)
+// ─────────────────────────────────────────────────────────────
+QWidget *MainWindow::createInputCard()
+{
+    m_inputCard = new QWidget(this);
+    m_inputCard->setStyleSheet(QStringLiteral(
+        "QWidget#inputCard { "
+        "  background: %1; border: 1px solid %2; border-radius: 16px; "
+        "  padding: 0px; "
+        "}"
+    ).arg(Col::BgCard, Col::Border));
+    m_inputCard->setObjectName(QStringLiteral("inputCard"));
+
+    auto *cardLayout = new QVBoxLayout(m_inputCard);
+    cardLayout->setContentsMargins(14, 10, 14, 10);
+    cardLayout->setSpacing(6);
+
+    // Pending image row
+    m_pendingImageLabel = new QLabel(m_inputCard);
+    m_pendingImageLabel->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
+    m_pendingImageLabel->setStyleSheet(QStringLiteral(
+        "QLabel { color: %1; font-size: 11px; border: none; }").arg(Col::AccentGlow));
+    m_pendingImageLabel->setTextFormat(Qt::RichText);
+    m_pendingImageLabel->setVisible(false);
+
+    m_clearImageButton = new QPushButton(QStringLiteral("✕"), m_inputCard);
+    m_clearImageButton->setFixedSize(24, 24);
+    m_clearImageButton->setStyleSheet(QStringLiteral(
+        "QPushButton { background: transparent; color: %1; border: none; font-size: 14px; padding: 0; "
+        "min-width: 24px; max-width: 24px; min-height: 24px; max-height: 24px; } "
+        "QPushButton:hover { color: %2; }"
+    ).arg(Col::TextMuted, Col::Danger));
+    m_clearImageButton->setVisible(false);
+
+    auto *pendingRow = new QHBoxLayout;
+    pendingRow->setContentsMargins(0, 0, 0, 0);
+    pendingRow->addWidget(m_pendingImageLabel);
+    pendingRow->addStretch(1);
+    pendingRow->addWidget(m_clearImageButton);
+    cardLayout->addLayout(pendingRow);
+
+    // Main input row
+    auto *inputRow = new QHBoxLayout;
+    inputRow->setSpacing(6);
+
+    m_input = new QLineEdit(m_inputCard);
+    m_input->setPlaceholderText(QStringLiteral("Ask me anything ..."));
+    m_input->setStyleSheet(QStringLiteral(
+        "QLineEdit { background: transparent; border: none; color: %1; font-size: 14px; padding: 8px 4px; }"
+    ).arg(Col::TextPrimary));
+    m_input->setMinimumHeight(36);
+    inputRow->addWidget(m_input, 1);
+
+    cardLayout->addLayout(inputRow);
+
+    // Tools row
+    auto *toolsRow = new QHBoxLayout;
+    toolsRow->setSpacing(4);
+
+    auto makeToolBtn = [&](const QString &iconName, const QString &tooltip) {
+        auto *btn = new QPushButton(m_inputCard);
+        btn->setIcon(createVectorIcon(iconName, 18));
+        btn->setIconSize(QSize(18, 18));
+        btn->setToolTip(tooltip);
+        btn->setFixedSize(34, 34);
+        btn->setCursor(Qt::PointingHandCursor);
+        btn->setFocusPolicy(Qt::NoFocus);
+        btn->setStyleSheet(QStringLiteral(
+            "QPushButton { background: transparent; border: none; border-radius: 8px; "
+            "min-width: 34px; max-width: 34px; min-height: 34px; max-height: 34px; padding: 0; } "
+            "QPushButton:hover { background: rgba(99,102,241,0.15); }"
+        ));
+        return btn;
+    };
+
+    m_cameraButton = makeToolBtn(QStringLiteral("camera"), QStringLiteral("Open camera to capture an image"));
+    m_imageButton = makeToolBtn(QStringLiteral("image"), QStringLiteral("Choose an image file"));
+    m_voiceButton = new QPushButton(m_inputCard);
+    m_voiceButton->setIcon(createVectorIcon(QStringLiteral("mic"), 18));
+    m_voiceButton->setIconSize(QSize(18, 18));
+    m_voiceButton->setToolTip(QStringLiteral("Voice input (push-to-talk)"));
+    m_voiceButton->setFixedSize(34, 34);
+    m_voiceButton->setCheckable(true);
+    m_voiceButton->setCursor(Qt::PointingHandCursor);
+    m_voiceButton->setFocusPolicy(Qt::NoFocus);
+    m_voiceButton->setStyleSheet(QStringLiteral(
+        "QPushButton { background: transparent; border: none; border-radius: 8px; "
+        "min-width: 34px; max-width: 34px; min-height: 34px; max-height: 34px; padding: 0; } "
+        "QPushButton:hover { background: rgba(99,102,241,0.15); } "
+        "QPushButton:checked { background: rgba(99,102,241,0.3); }"
+    ));
+    m_voiceButton->setEnabled(false);
+
+    toolsRow->addWidget(m_cameraButton);
+    toolsRow->addWidget(m_imageButton);
+    toolsRow->addWidget(m_voiceButton);
+    toolsRow->addStretch(1);
+
+    // Send button
+    m_sendButton = new QPushButton(m_inputCard);
+    m_sendButton->setIcon(createVectorIcon(QStringLiteral("send"), 18));
+    m_sendButton->setIconSize(QSize(18, 18));
+    m_sendButton->setFixedSize(38, 38);
+    m_sendButton->setCursor(Qt::PointingHandCursor);
+    m_sendButton->setFocusPolicy(Qt::NoFocus);
+    m_sendButton->setStyleSheet(QStringLiteral(
+        "QPushButton { "
+        "  background: %1; border: none; border-radius: 19px; "
+        "  min-width: 38px; max-width: 38px; min-height: 38px; max-height: 38px; padding: 0; "
+        "} "
+        "QPushButton:hover { background: %2; } "
+        "QPushButton:disabled { background: %3; }"
+    ).arg(Col::Accent, Col::AccentGlow, Col::Border));
+    toolsRow->addWidget(m_sendButton);
+
+    cardLayout->addLayout(toolsRow);
+
+    return m_inputCard;
+}
+
+// ─────────────────────────────────────────────────────────────
+//  Navigation
+// ─────────────────────────────────────────────────────────────
+void MainWindow::navigateTo(int pageIndex)
+{
+    if (pageIndex == m_currentPage && pageIndex < 3) {
+        return;
+    }
+
+    // Uncheck old nav button
+    QList<QPushButton *> navBtns = {m_navHome, m_navChat, m_navDev};
+    for (int i = 0; i < navBtns.size(); ++i) {
+        const QSignalBlocker blocker(navBtns[i]);
+        navBtns[i]->setChecked(i == pageIndex);
+    }
+
+    m_currentPage = pageIndex;
+    m_pageStack->setCurrentIndex(pageIndex);
+
+    // Move input card to the active page's slot
+    if (pageIndex == 0) {
+        reparentInputCard(m_welcomeInputSlot);
+    } else if (pageIndex == 1) {
+        reparentInputCard(m_chatInputSlot);
+    }
+    // Dev hub page doesn't use the input card
+
+    if (pageIndex == 1 && m_modelReady) {
+        m_input->setFocus();
+    }
+}
+
+void MainWindow::reparentInputCard(QVBoxLayout *targetLayout)
+{
+    if (!m_inputCard || !targetLayout) {
+        return;
+    }
+
+    // Add to the new layout — Qt handles reparenting automatically
+    if (targetLayout->indexOf(m_inputCard) == -1) {
+        targetLayout->addWidget(m_inputCard);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+//  Constructor
+// ─────────────────────────────────────────────────────────────
+MainWindow::MainWindow(QWidget *parent)
+    : QMainWindow(parent)
+{
+    setWindowTitle(QStringLiteral("TitanAI"));
+    resize(980, 680);
+    setMinimumSize(780, 520);
+
+    setupGlobalStylesheet();
+
+    // --- Central layout: sidebar | page stack ---
+    auto *central = new QWidget(this);
+    auto *mainHLayout = new QHBoxLayout(central);
+    mainHLayout->setContentsMargins(0, 0, 0, 0);
+    mainHLayout->setSpacing(0);
+
+    // Sidebar
+    mainHLayout->addWidget(createSidebar());
+
+    // Separator line
+    auto *separator = new QWidget(central);
+    separator->setFixedWidth(1);
+    separator->setStyleSheet(QStringLiteral("background: %1;").arg(Col::Border));
+    mainHLayout->addWidget(separator);
+
+    // Page stack
+    m_pageStack = new QStackedWidget(central);
+    m_pageStack->addWidget(createWelcomePage());   // 0
+    m_pageStack->addWidget(createChatPage());       // 1
+    m_pageStack->addWidget(createDevHubPage());     // 2
+    mainHLayout->addWidget(m_pageStack, 1);
+
     setCentralWidget(central);
+
+    // Create shared input card and initially place on welcome page
+    createInputCard();
+    reparentInputCard(m_welcomeInputSlot);
+
+    // --- Hidden helper widgets for compatibility ---
+    m_voiceSettingsButton = new QPushButton(this);
+    m_voiceSettingsButton->setVisible(false);
+    m_calendarButton = new QPushButton(this);
+    m_calendarButton->setVisible(false);
+
+    // ═══════════════════════════════════════════════════════
+    //  Connections  (preserved from original, adapted)
+    // ═══════════════════════════════════════════════════════
 
     connect(m_sendButton, &QPushButton::clicked, this, &MainWindow::onSendClicked);
     connect(m_input, &QLineEdit::returnPressed, this, &MainWindow::onSendClicked);
@@ -177,6 +857,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(&m_agent, &Agent::modelReady, this, &MainWindow::onModelReady);
     connect(&m_agent, &Agent::modelError, this, &MainWindow::onModelError);
 
+    // Restore settings
     m_projectDirectory = m_settings.value(QStringLiteral("projectDir")).toString();
     m_buildCommand = m_settings.value(QStringLiteral("buildCommand")).toString();
     const bool autoFixEnabled = m_settings.value(QStringLiteral("autoFixEnabled"), false).toBool();
@@ -206,26 +887,28 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_buildFixButton, &QPushButton::clicked, this, &MainWindow::onBuildAndFixClicked);
     connect(m_organizeButton, &QPushButton::clicked, this, &MainWindow::onOrganizeClicked);
 
+    // File organizer
     FileOrganizer &organizer = m_agent.fileOrganizer();
     connect(&organizer, &FileOrganizer::scanStarted, this,
             [this](const QString &rootPath) {
                 m_organizeButton->setEnabled(false);
+                navigateTo(1); // Switch to chat to show results
                 appendPlainLine(
                     QStringLiteral("Scanning '%1' for duplicates and organization ideas...")
                         .arg(rootPath),
-                    QStringLiteral("#6b7280"));
+                    Col::TextMuted);
             });
     connect(&organizer, &FileOrganizer::scanFinished, this,
             [this](int, int, quint64) {
                 m_organizeButton->setEnabled(true);
                 appendMessage(QStringLiteral("TitanAI"),
                               m_agent.fileOrganizer().formatFullReport(),
-                              QStringLiteral("#4a90d9"));
+                              Col::AccentGlow);
             });
     connect(&organizer, &FileOrganizer::scanError, this,
             [this](const QString &error) {
                 m_organizeButton->setEnabled(true);
-                appendMessage(QStringLiteral("Error"), error, QStringLiteral("#c0392b"));
+                appendMessage(QStringLiteral("Error"), error, Col::Danger);
             });
     connect(&m_agent, &Agent::autoFixEnabledChanged, this, [this](bool enabled) {
         m_settings.setValue(QStringLiteral("autoFixEnabled"), enabled);
@@ -233,24 +916,23 @@ MainWindow::MainWindow(QWidget *parent)
         m_autoFixCheck->setChecked(enabled);
     });
     connect(&m_agent, &Agent::codeFixStatus, this, [this](const QString &message) {
-        appendMessage(QStringLiteral("TitanAI"), message, QStringLiteral("#4a90d9"));
+        navigateTo(1);
+        appendMessage(QStringLiteral("TitanAI"), message, Col::AccentGlow);
     });
     connect(&m_agent, &Agent::codeFixFinished, this,
             [this](const QString &summary, bool success) {
                 appendMessage(success ? QStringLiteral("TitanAI") : QStringLiteral("Error"),
                               summary,
-                              success ? QStringLiteral("#4a90d9") : QStringLiteral("#c0392b"));
+                              success ? QLatin1String(Col::AccentGlow) : QLatin1String(Col::Danger));
                 setInputEnabled(true);
             });
 
     connect(&m_agent, &Agent::startupSuggestionsReady, this, &MainWindow::onStartupSuggestions);
     connect(&m_agent, &Agent::calendarEventsReady, this, &MainWindow::onCalendarEventsReady);
     connect(&m_agent, &Agent::calendarNotificationAlert, this, &MainWindow::onCalendarNotificationAlert);
-    connect(m_calendarButton, &QPushButton::clicked, this, &MainWindow::onOpenCalendarSettings);
 
+    // Voice connections
     connect(m_voiceButton, &QPushButton::toggled, this, &MainWindow::onVoiceButtonToggled);
-    connect(m_voiceSettingsButton, &QPushButton::clicked, this, &MainWindow::onVoiceSettings);
-
     connect(m_cameraButton, &QPushButton::clicked, this, &MainWindow::onCaptureFromCamera);
     connect(m_imageButton, &QPushButton::clicked, this, &MainWindow::onSelectImage);
     connect(m_clearImageButton, &QPushButton::clicked, this, &MainWindow::onClearPendingImage);
@@ -259,7 +941,6 @@ MainWindow::MainWindow(QWidget *parent)
     connect(&m_voiceEngine, &VoiceEngine::listeningChanged, this, [this](bool listening) {
         const QSignalBlocker blocker(m_voiceButton);
         m_voiceButton->setChecked(listening);
-        m_voiceButton->setText(listening ? QStringLiteral("Stop") : QStringLiteral("Mic"));
         m_micLevelBar->setVisible(listening);
         if (!listening) {
             m_voiceStatusLabel->clear();
@@ -283,15 +964,19 @@ MainWindow::MainWindow(QWidget *parent)
     m_voiceEngine.setConfig(loadVoiceSettings());
     updateVoiceUi();
 
+    // Welcome message in chat
     appendMessage(QStringLiteral("TitanAI"),
                   QStringLiteral("Welcome! Loading the local AI model. You can start chatting once "
                                  "it is ready."),
-                  QStringLiteral("#4a90d9"));
+                  Col::AccentGlow);
 
     setInputEnabled(false);
     m_agent.initializeModel(Agent::kDefaultModel);
 }
 
+// ─────────────────────────────────────────────────────────────
+//  Slots (mostly preserved, adapted colours)
+// ─────────────────────────────────────────────────────────────
 void MainWindow::onSendClicked()
 {
     if (!m_modelReady) {
@@ -303,8 +988,13 @@ void MainWindow::onSendClicked()
         return;
     }
 
+    // Switch to chat page if on welcome
+    if (m_currentPage != 1) {
+        navigateTo(1);
+    }
+
     m_input->clear();
-    appendMessage(QStringLiteral("You"), text, QStringLiteral("#2c3e50"));
+    appendMessage(QStringLiteral("You"), text, Col::AccentCyan);
     if (!m_pendingImage.isNull()) {
         appendImage(m_pendingImage);
     }
@@ -326,23 +1016,22 @@ void MainWindow::onSendClicked()
 void MainWindow::onModelReady(const QString &model)
 {
     m_modelReady = true;
-    m_statusLabel->setText(QStringLiteral("Model ready: %1").arg(model));
+    m_statusLabel->setText(QStringLiteral("✦ Model ready: %1").arg(model));
     appendMessage(QStringLiteral("TitanAI"),
                   QStringLiteral("Local AI model '%1' is ready. Ask me anything about your "
                                  "system, or just chat!")
                       .arg(model),
-                  QStringLiteral("#4a90d9"));
+                  Col::AccentGlow);
     setInputEnabled(true);
 
     m_agent.startLearning();
-
     m_agent.startCalendar();
     m_agent.calendarManager().setAutoRefresh(true);
 
     QTimer::singleShot(2000, this, [this]() {
         const QString suggestions = m_agent.getStartupSuggestions();
         if (!suggestions.isEmpty()) {
-            appendMessage(QStringLiteral("TitanAI"), suggestions, QStringLiteral("#4a90d9"));
+            appendMessage(QStringLiteral("TitanAI"), suggestions, Col::AccentGlow);
         }
     });
 }
@@ -350,13 +1039,17 @@ void MainWindow::onModelReady(const QString &model)
 void MainWindow::onModelError(const QString &error)
 {
     m_modelReady = false;
-    m_statusLabel->setText(QStringLiteral("Model unavailable"));
-    appendMessage(QStringLiteral("Error"), error, QStringLiteral("#c0392b"));
+    m_statusLabel->setText(QStringLiteral("✕ Model unavailable"));
+    appendMessage(QStringLiteral("Error"), error, Col::Danger);
     setInputEnabled(false);
 }
 
 void MainWindow::onResponseChunk(const QString &chunk)
 {
+    if (m_currentPage != 1) {
+        navigateTo(1);
+    }
+
     m_streamActive = true;
 
     if (!m_streamBlockStarted) {
@@ -372,8 +1065,12 @@ void MainWindow::onResponseChunk(const QString &chunk)
 
 void MainWindow::onResponseReceived(const QString &response)
 {
+    if (m_currentPage != 1) {
+        navigateTo(1);
+    }
+
     if (!m_streamActive) {
-        appendMessage(QStringLiteral("TitanAI"), response, QStringLiteral("#4a90d9"));
+        appendMessage(QStringLiteral("TitanAI"), response, Col::AccentGlow);
     }
 
     m_streamActive = false;
@@ -388,9 +1085,13 @@ void MainWindow::onResponseReceived(const QString &response)
 
 void MainWindow::onErrorOccurred(const QString &error)
 {
+    if (m_currentPage != 1) {
+        navigateTo(1);
+    }
+
     m_streamActive = false;
     m_streamBlockStarted = false;
-    appendMessage(QStringLiteral("Error"), error, QStringLiteral("#c0392b"));
+    appendMessage(QStringLiteral("Error"), error, Col::Danger);
     setInputEnabled(true);
 }
 
@@ -411,15 +1112,19 @@ void MainWindow::onInstallRequested(const QStringList &packages)
         return;
     }
 
+    navigateTo(1);
     appendMessage(QStringLiteral("TitanAI"),
                   QStringLiteral("Installing %1...").arg(packages.join(QStringLiteral(", "))),
-                  QStringLiteral("#4a90d9"));
+                  Col::AccentGlow);
     m_agent.performInstall(packages);
 }
 
 void MainWindow::onToolOutput(const QString &line)
 {
-    appendPlainLine(line, QStringLiteral("#6b7280"));
+    if (m_currentPage != 1) {
+        navigateTo(1);
+    }
+    appendPlainLine(line, Col::TextMuted);
 }
 
 void MainWindow::onBrowseProject()
@@ -443,9 +1148,10 @@ void MainWindow::onBuildAndFixClicked()
         return;
     }
     if (!m_modelReady) {
+        navigateTo(1);
         appendMessage(QStringLiteral("Error"),
                       QStringLiteral("The model is not ready yet. Please wait."),
-                      QStringLiteral("#c0392b"));
+                      Col::Danger);
         return;
     }
     setInputEnabled(false);
@@ -464,7 +1170,7 @@ void MainWindow::onOrganizeClicked()
 
 void MainWindow::startStreamingBlock()
 {
-    m_chatDisplay->append(QStringLiteral("<b style=\"color:#4a90d9\">TitanAI:</b> "));
+    m_chatDisplay->append(QStringLiteral("<b style=\"color:%1\">TitanAI:</b> ").arg(Col::AccentGlow));
     m_streamBlockStarted = true;
 
     QTextCursor cursor = m_chatDisplay->textCursor();
@@ -476,7 +1182,9 @@ void MainWindow::setInputEnabled(bool enabled)
 {
     m_input->setEnabled(enabled);
     m_sendButton->setEnabled(enabled);
-    m_buildFixButton->setEnabled(enabled);
+    if (m_buildFixButton) {
+        m_buildFixButton->setEnabled(enabled);
+    }
     if (enabled) {
         m_input->setFocus();
     }
@@ -487,7 +1195,8 @@ void MainWindow::appendMessage(const QString &sender, const QString &text, const
     QString escaped = text.toHtmlEscaped();
     escaped.replace(QLatin1Char('\n'), QStringLiteral("<br/>"));
     m_chatDisplay->append(
-        QStringLiteral("<b style=\"color:%1\">%2:</b> %3").arg(color, sender, escaped));
+        QStringLiteral("<b style=\"color:%1\">%2:</b> <span style=\"color:%3\">%4</span>")
+            .arg(color, sender, Col::TextPrimary, escaped));
     m_chatDisplay->verticalScrollBar()->setValue(m_chatDisplay->verticalScrollBar()->maximum());
 }
 
@@ -498,6 +1207,24 @@ void MainWindow::appendPlainLine(const QString &text, const QString &color)
     m_chatDisplay->verticalScrollBar()->setValue(m_chatDisplay->verticalScrollBar()->maximum());
 }
 
+void MainWindow::appendImage(const QImage &image)
+{
+    QImage thumb = image.scaled(320, 320, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    QByteArray bytes;
+    QBuffer buffer(&bytes);
+    buffer.open(QIODevice::WriteOnly);
+    thumb.save(&buffer, "PNG");
+
+    m_chatDisplay->append(
+        QStringLiteral("<b style=\"color:%1\">You:</b><br/>"
+                       "<img src=\"data:image/png;base64,%2\" style=\"max-width:100%;\"/>")
+            .arg(Col::AccentCyan, QString::fromLatin1(bytes.toBase64())));
+    m_chatDisplay->verticalScrollBar()->setValue(m_chatDisplay->verticalScrollBar()->maximum());
+}
+
+// ─────────────────────────────────────────────────────────────
+//  Voice slots
+// ─────────────────────────────────────────────────────────────
 void MainWindow::onVoicePartial(const QString &text)
 {
     m_voiceStatusLabel->setText(QStringLiteral("... %1").arg(text));
@@ -515,7 +1242,8 @@ void MainWindow::onVoiceFinal(const QString &text)
 
 void MainWindow::onVoiceError(const QString &error)
 {
-    appendMessage(QStringLiteral("Voice"), error, QStringLiteral("#c0392b"));
+    navigateTo(1);
+    appendMessage(QStringLiteral("Voice"), error, Col::Danger);
     m_voiceStatusLabel->setText(error);
 }
 
@@ -552,9 +1280,10 @@ void MainWindow::onCaptureFromCamera()
         }
         m_pendingImage = image;
         updatePendingImageUi();
+        navigateTo(1);
         appendMessage(QStringLiteral("TitanAI"),
                       QStringLiteral("Image captured. Ask your question about it and press Send."),
-                      QStringLiteral("#4a90d9"));
+                      Col::AccentGlow);
     }
 }
 
@@ -571,17 +1300,19 @@ void MainWindow::onSelectImage()
 
     QImage image(file);
     if (image.isNull()) {
+        navigateTo(1);
         appendMessage(QStringLiteral("Error"),
                       QStringLiteral("Could not load the selected image."),
-                      QStringLiteral("#c0392b"));
+                      Col::Danger);
         return;
     }
 
     m_pendingImage = image;
     updatePendingImageUi();
+    navigateTo(1);
     appendMessage(QStringLiteral("TitanAI"),
                   QStringLiteral("Image selected. Ask your question about it and press Send."),
-                  QStringLiteral("#4a90d9"));
+                  Col::AccentGlow);
 }
 
 void MainWindow::onClearPendingImage()
@@ -607,21 +1338,6 @@ void MainWindow::updatePendingImageUi()
                            "&mdash; type a question and press Send.")
                 .arg(QString::fromLatin1(bytes.toBase64())));
     }
-}
-
-void MainWindow::appendImage(const QImage &image)
-{
-    QImage thumb = image.scaled(320, 320, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-    QByteArray bytes;
-    QBuffer buffer(&bytes);
-    buffer.open(QIODevice::WriteOnly);
-    thumb.save(&buffer, "PNG");
-
-    m_chatDisplay->append(
-        QStringLiteral("<b style=\"color:#2c3e50\">You:</b><br/>"
-                       "<img src=\"data:image/png;base64,%1\" style=\"max-width:100%;\"/>")
-            .arg(QString::fromLatin1(bytes.toBase64())));
-    m_chatDisplay->verticalScrollBar()->setValue(m_chatDisplay->verticalScrollBar()->maximum());
 }
 
 VoiceEngine::Config MainWindow::loadVoiceSettings()
@@ -686,14 +1402,14 @@ void MainWindow::updateVoiceUi()
 void MainWindow::onStartupSuggestions(const QString &suggestions)
 {
     if (!suggestions.isEmpty()) {
-        appendMessage(QStringLiteral("TitanAI"), suggestions, QStringLiteral("#4a90d9"));
+        appendMessage(QStringLiteral("TitanAI"), suggestions, Col::AccentGlow);
     }
 }
 
 void MainWindow::onCalendarEventsReady(const QString &eventsSummary)
 {
     if (!eventsSummary.isEmpty()) {
-        appendMessage(QStringLiteral("TitanAI"), eventsSummary, QStringLiteral("#4a90d9"));
+        appendMessage(QStringLiteral("TitanAI"), eventsSummary, Col::AccentGlow);
     }
 }
 
@@ -708,7 +1424,7 @@ void MainWindow::onCalendarNotificationAlert(const QString &title, const QString
     });
 
     appendMessage(QStringLiteral("TitanAI"), QStringLiteral("[%1] %2").arg(title, message),
-                  QStringLiteral("#e67e22"));
+                  Col::Warning);
 }
 
 void MainWindow::onOpenCalendarSettings()
