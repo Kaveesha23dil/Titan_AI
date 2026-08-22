@@ -481,43 +481,117 @@ QWidget *MainWindow::createChatPage()
 {
     auto *page = new QWidget(this);
     auto *layout = new QVBoxLayout(page);
-    layout->setContentsMargins(20, 16, 20, 16);
-    layout->setSpacing(8);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
 
-    // Status bar
-    m_statusLabel = new QLabel(QStringLiteral("Initializing local AI model..."), page);
-    m_statusLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    // ── Header bar ──
+    auto *headerBar = new QWidget(page);
+    headerBar->setFixedHeight(56);
+    headerBar->setStyleSheet(QStringLiteral(
+        "QWidget { background: qlineargradient(x1:0,y1:0,x2:1,y2:0, "
+        "stop:0 %1, stop:1 %2); border-bottom: 1px solid %3; }")
+        .arg(Col::BgCard, Col::BgDeep, Col::Border));
+
+    auto *headerLayout = new QHBoxLayout(headerBar);
+    headerLayout->setContentsMargins(20, 0, 20, 0);
+
+    // Avatar circle
+    auto *avatarLabel = new QLabel(headerBar);
+    QPixmap avatarPm(32, 32);
+    avatarPm.fill(Qt::transparent);
+    {
+        QPainter ap(&avatarPm);
+        ap.setRenderHint(QPainter::Antialiasing);
+        QLinearGradient grad(0, 0, 32, 32);
+        grad.setColorAt(0, QColor(Col::Accent));
+        grad.setColorAt(1, QColor(Col::AccentCyan));
+        ap.setBrush(grad);
+        ap.setPen(Qt::NoPen);
+        ap.drawEllipse(0, 0, 32, 32);
+        ap.setPen(Qt::white);
+        QFont f = ap.font();
+        f.setBold(true);
+        f.setPixelSize(14);
+        ap.setFont(f);
+        ap.drawText(QRect(0, 0, 32, 32), Qt::AlignCenter, QStringLiteral("T"));
+        ap.end();
+    }
+    avatarLabel->setPixmap(avatarPm);
+    avatarLabel->setFixedSize(32, 32);
+    avatarLabel->setStyleSheet(QStringLiteral("border: none; background: transparent;"));
+    headerLayout->addWidget(avatarLabel);
+    headerLayout->addSpacing(10);
+
+    auto *headerTitle = new QLabel(QStringLiteral("TitanAI"), headerBar);
+    headerTitle->setStyleSheet(QStringLiteral(
+        "QLabel { color: %1; font-size: 16px; font-weight: 700; border: none; background: transparent; }").arg(Col::TextPrimary));
+    headerLayout->addWidget(headerTitle);
+
+    // Status badge
+    m_statusLabel = new QLabel(QStringLiteral("● Initializing..."), headerBar);
     m_statusLabel->setStyleSheet(QStringLiteral(
-        "QLabel { color: %1; font-size: 11px; padding: 4px 8px; "
-        "background: %2; border-radius: 6px; }").arg(Col::TextMuted, Col::BgCard));
-    m_statusLabel->setFixedHeight(28);
-    layout->addWidget(m_statusLabel);
+        "QLabel { color: %1; font-size: 11px; border: none; background: transparent; }").arg(Col::TextMuted));
+    headerLayout->addWidget(m_statusLabel);
+    headerLayout->addStretch(1);
 
-    // Chat display
-    m_chatDisplay = new QTextBrowser(page);
+    // Online indicator dot
+    auto *onlineDot = new QLabel(headerBar);
+    onlineDot->setFixedSize(10, 10);
+    onlineDot->setStyleSheet(QStringLiteral(
+        "QLabel { background: %1; border-radius: 5px; border: none; }").arg(Col::Success));
+    headerLayout->addWidget(onlineDot);
+    auto *onlineText = new QLabel(QStringLiteral("Local"), headerBar);
+    onlineText->setStyleSheet(QStringLiteral(
+        "QLabel { color: %1; font-size: 11px; border: none; background: transparent; }").arg(Col::TextMuted));
+    headerLayout->addWidget(onlineText);
+
+    layout->addWidget(headerBar);
+
+    // ── Chat display ──
+    auto *chatContainer = new QWidget(page);
+    auto *chatLayout = new QVBoxLayout(chatContainer);
+    chatLayout->setContentsMargins(16, 12, 16, 8);
+    chatLayout->setSpacing(6);
+
+    m_chatDisplay = new QTextBrowser(chatContainer);
     m_chatDisplay->setReadOnly(true);
     m_chatDisplay->setOpenExternalLinks(false);
     m_chatDisplay->setFrameShape(QFrame::NoFrame);
-    layout->addWidget(m_chatDisplay, 1);
+    // Custom CSS for the chat document itself
+    m_chatDisplay->document()->setDefaultStyleSheet(QStringLiteral(
+        "body { margin: 0; padding: 0; } "
+        "table { margin-bottom: 6px; } "
+        "td { padding: 10px 14px; font-size: 14px; } "
+        ".bubble-bot { background-color: %1; } "
+        ".bubble-user { background-color: %2; } "
+        ".bubble-error { background-color: %3; } "
+        ".bubble-tool { background-color: %4; } "
+    ).arg(
+        QStringLiteral("#151d2e"),  // Bot bubble bg
+        QStringLiteral("#1a1540"),  // User bubble bg
+        QStringLiteral("#2a1215"),  // Error bubble bg
+        QStringLiteral("#111520")   // Tool output bg
+    ));
+    chatLayout->addWidget(m_chatDisplay, 1);
 
     // Notification banner
-    m_notificationBanner = new QLabel(page);
+    m_notificationBanner = new QLabel(chatContainer);
     m_notificationBanner->setAlignment(Qt::AlignCenter);
     m_notificationBanner->setWordWrap(true);
     m_notificationBanner->setStyleSheet(QStringLiteral(
         "QLabel { background: %1; border: 1px solid %2; border-radius: 8px; "
-        "padding: 10px 14px; color: %3; font-size: 12px; }"
-    ).arg(Col::InfoBg, Col::Accent, Col::AccentGlow));
+        "padding: 10px 14px; color: %3; font-size: 12px; }")
+        .arg(Col::InfoBg, Col::Accent, Col::AccentGlow));
     m_notificationBanner->setVisible(false);
     m_notificationBanner->setTextFormat(Qt::RichText);
-    layout->addWidget(m_notificationBanner);
+    chatLayout->addWidget(m_notificationBanner);
 
     // Voice status row
-    m_voiceStatusLabel = new QLabel(QStringLiteral("Voice disabled"), page);
+    m_voiceStatusLabel = new QLabel(QStringLiteral("Voice disabled"), chatContainer);
     m_voiceStatusLabel->setStyleSheet(QStringLiteral(
         "QLabel { color: %1; font-size: 10px; }").arg(Col::TextMuted));
 
-    m_micLevelBar = new QProgressBar(page);
+    m_micLevelBar = new QProgressBar(chatContainer);
     m_micLevelBar->setRange(0, 100);
     m_micLevelBar->setValue(0);
     m_micLevelBar->setTextVisible(false);
@@ -529,12 +603,14 @@ QWidget *MainWindow::createChatPage()
     voiceStatusRow->addWidget(m_voiceStatusLabel);
     voiceStatusRow->addStretch(1);
     voiceStatusRow->addWidget(m_micLevelBar);
-    layout->addLayout(voiceStatusRow);
+    chatLayout->addLayout(voiceStatusRow);
 
     // Chat input slot
     m_chatInputSlot = new QVBoxLayout;
     m_chatInputSlot->setContentsMargins(0, 0, 0, 0);
-    layout->addLayout(m_chatInputSlot);
+    chatLayout->addLayout(m_chatInputSlot);
+
+    layout->addWidget(chatContainer, 1);
 
     return page;
 }
@@ -1170,7 +1246,13 @@ void MainWindow::onOrganizeClicked()
 
 void MainWindow::startStreamingBlock()
 {
-    m_chatDisplay->append(QStringLiteral("<b style=\"color:%1\">TitanAI:</b> ").arg(Col::AccentGlow));
+    // Start a new bot-style bubble for streaming content
+    m_chatDisplay->append(QStringLiteral(
+        "<table width='100%%' cellpadding='0' cellspacing='0'><tr>"
+        "<td width='8' bgcolor='%1'></td>"
+        "<td bgcolor='%2' style='padding:10px 14px;'>"
+        "<b style='color:%3;font-size:12px;'>✦ TitanAI</b><br/>"
+    ).arg(Col::Accent, QStringLiteral("#151d2e"), Col::AccentGlow));
     m_streamBlockStarted = true;
 
     QTextCursor cursor = m_chatDisplay->textCursor();
@@ -1194,16 +1276,59 @@ void MainWindow::appendMessage(const QString &sender, const QString &text, const
 {
     QString escaped = text.toHtmlEscaped();
     escaped.replace(QLatin1Char('\n'), QStringLiteral("<br/>"));
-    m_chatDisplay->append(
-        QStringLiteral("<b style=\"color:%1\">%2:</b> <span style=\"color:%3\">%4</span>")
-            .arg(color, sender, Col::TextPrimary, escaped));
+
+    const bool isUser = (sender == QStringLiteral("You"));
+    const bool isError = (sender == QStringLiteral("Error") || sender == QStringLiteral("Voice"));
+
+    // Pick bubble colours
+    QString bubbleBg, accentBar, senderIcon;
+    if (isUser) {
+        bubbleBg  = QStringLiteral("#1a1540");
+        accentBar = Col::AccentCyan;
+        senderIcon = QStringLiteral("👤 ");
+    } else if (isError) {
+        bubbleBg  = QStringLiteral("#2a1215");
+        accentBar = Col::Danger;
+        senderIcon = QStringLiteral("⚠ ");
+    } else {
+        bubbleBg  = QStringLiteral("#151d2e");
+        accentBar = Col::Accent;
+        senderIcon = QStringLiteral("✦ ");
+    }
+
+    // Alignment: user messages align right, bot/errors align left
+    const QString align = isUser ? QStringLiteral("right") : QStringLiteral("left");
+    const QString width = QStringLiteral("88%%");
+
+    const QString html = QStringLiteral(
+        "<table width='%1' align='%2' cellpadding='0' cellspacing='0' style='margin-bottom:2px;'>"
+        "<tr>"
+        "<td width='4' bgcolor='%3'></td>"
+        "<td bgcolor='%4' style='padding:10px 14px;'>"
+        "<b style='color:%5;font-size:12px;'>%6%7</b><br/>"
+        "<span style='color:%8;font-size:14px;'>%9</span>"
+        "</td>"
+        "</tr></table>"
+    ).arg(width, align, accentBar, bubbleBg, color, senderIcon, sender,
+          Col::TextPrimary, escaped);
+
+    m_chatDisplay->append(html);
     m_chatDisplay->verticalScrollBar()->setValue(m_chatDisplay->verticalScrollBar()->maximum());
 }
 
 void MainWindow::appendPlainLine(const QString &text, const QString &color)
 {
-    m_chatDisplay->append(
-        QStringLiteral("<span style=\"color:%1\">%2</span>").arg(color, text.toHtmlEscaped()));
+    const QString html = QStringLiteral(
+        "<table width='88%%' cellpadding='0' cellspacing='0' style='margin-bottom:1px;'>"
+        "<tr>"
+        "<td width='4' bgcolor='%1'></td>"
+        "<td bgcolor='%2' style='padding:6px 14px;'>"
+        "<code style='color:%3;font-size:12px;'>%4</code>"
+        "</td>"
+        "</tr></table>"
+    ).arg(Col::TextMuted, QStringLiteral("#111520"), color, text.toHtmlEscaped());
+
+    m_chatDisplay->append(html);
     m_chatDisplay->verticalScrollBar()->setValue(m_chatDisplay->verticalScrollBar()->maximum());
 }
 
@@ -1215,10 +1340,17 @@ void MainWindow::appendImage(const QImage &image)
     buffer.open(QIODevice::WriteOnly);
     thumb.save(&buffer, "PNG");
 
-    m_chatDisplay->append(
-        QStringLiteral("<b style=\"color:%1\">You:</b><br/>"
-                       "<img src=\"data:image/png;base64,%2\" style=\"max-width:100%;\"/>")
-            .arg(Col::AccentCyan, QString::fromLatin1(bytes.toBase64())));
+    const QString html = QStringLiteral(
+        "<table width='88%%' align='right' cellpadding='0' cellspacing='0' style='margin-bottom:2px;'>"
+        "<tr>"
+        "<td width='4' bgcolor='%1'></td>"
+        "<td bgcolor='%2' style='padding:10px 14px;'>"
+        "<img src='data:image/png;base64,%3' width='300'/>"
+        "</td>"
+        "</tr></table>"
+    ).arg(Col::AccentCyan, QStringLiteral("#1a1540"), QString::fromLatin1(bytes.toBase64()));
+
+    m_chatDisplay->append(html);
     m_chatDisplay->verticalScrollBar()->setValue(m_chatDisplay->verticalScrollBar()->maximum());
 }
 
