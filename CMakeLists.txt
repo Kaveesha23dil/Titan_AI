@@ -13,6 +13,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Enable Qt Meta-Object Compiler (MOC)
 set(CMAKE_AUTOMOC ON)
+set(CMAKE_AUTORCC ON)
 
 # Export compile commands for IDE code intelligence
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -23,6 +24,7 @@ find_package(Qt6 REQUIRED COMPONENTS Core Network Widgets Multimedia MultimediaW
 # Add target executable
 add_executable(TitanAI
     src/main.cpp
+    resources.qrc
     src/gui/main_window.cpp
     src/gui/voice_settings_dialog.cpp
     src/gui/camera_dialog.cpp

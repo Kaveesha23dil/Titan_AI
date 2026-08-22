@@ -13,7 +13,10 @@ class QLabel;
 class QLineEdit;
 class QProgressBar;
 class QPushButton;
+class QStackedWidget;
 class QTextBrowser;
+class QVBoxLayout;
+class QWidget;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -49,6 +52,20 @@ private slots:
     void onOpenCalendarSettings();
 
 private:
+    // --- UI setup helpers ---
+    void setupGlobalStylesheet();
+    QWidget *createSidebar();
+    QWidget *createWelcomePage();
+    QWidget *createChatPage();
+    QWidget *createDevHubPage();
+    QWidget *createInputCard();
+    QIcon createVectorIcon(const QString &name, int size = 24);
+    void reparentInputCard(QVBoxLayout *targetLayout);
+
+    // --- Navigation ---
+    void navigateTo(int pageIndex);
+
+    // --- Existing helpers ---
     void setInputEnabled(bool enabled);
     void appendMessage(const QString &sender, const QString &text, const QString &color);
     void appendImage(const QImage &image);
@@ -59,35 +76,63 @@ private:
     void saveVoiceSettings(const VoiceEngine::Config &config);
     VoiceEngine::Config loadVoiceSettings();
 
+    // --- Core state ---
     Agent m_agent;
     VoiceEngine m_voiceEngine;
-    QTextBrowser *m_chatDisplay;
-    QLineEdit *m_input;
-    QPushButton *m_sendButton;
-    QLabel *m_statusLabel;
+    QSettings m_settings{QStringLiteral("TitanAI"), QStringLiteral("TitanAI")};
+    QString m_projectDirectory;
+    QString m_buildCommand;
+    QImage m_pendingImage;
+    bool m_modelReady{false};
+    bool m_streamActive{false};
+    bool m_streamBlockStarted{false};
+
+    // --- Navigation & Pages ---
+    QStackedWidget *m_pageStack{nullptr};
+    QPushButton *m_navHome{nullptr};
+    QPushButton *m_navChat{nullptr};
+    QPushButton *m_navDev{nullptr};
+    QPushButton *m_navCalendar{nullptr};
+    QPushButton *m_navVoiceSettings{nullptr};
+    QPushButton *m_navSettings{nullptr};
+    int m_currentPage{0};
+
+    // --- Welcome Page widgets ---
+    QLabel *m_welcomeGreeting{nullptr};
+    QLabel *m_welcomeSubtitle{nullptr};
+    QVBoxLayout *m_welcomeInputSlot{nullptr};
+
+    // --- Chat Page widgets ---
+    QTextBrowser *m_chatDisplay{nullptr};
+    QLabel *m_statusLabel{nullptr};
+    QVBoxLayout *m_chatInputSlot{nullptr};
+
+    // --- Shared Input Card ---
+    QWidget *m_inputCard{nullptr};
+    QLineEdit *m_input{nullptr};
+    QPushButton *m_sendButton{nullptr};
+    QPushButton *m_voiceButton{nullptr};
+    QPushButton *m_cameraButton{nullptr};
+    QPushButton *m_imageButton{nullptr};
+    QLabel *m_pendingImageLabel{nullptr};
+    QPushButton *m_clearImageButton{nullptr};
+    QLabel *m_voiceStatusLabel{nullptr};
+    QProgressBar *m_micLevelBar{nullptr};
+
+    // --- Dev Hub widgets ---
     QCheckBox *m_autoFixCheck{nullptr};
     QLineEdit *m_projectEdit{nullptr};
     QPushButton *m_browseButton{nullptr};
     QLineEdit *m_buildEdit{nullptr};
     QPushButton *m_buildFixButton{nullptr};
     QPushButton *m_organizeButton{nullptr};
-    QPushButton *m_voiceButton{nullptr};
-    QPushButton *m_voiceSettingsButton{nullptr};
-    QLabel *m_voiceStatusLabel{nullptr};
-    QProgressBar *m_micLevelBar{nullptr};
-    QPushButton *m_cameraButton{nullptr};
-    QPushButton *m_imageButton{nullptr};
-    QLabel *m_pendingImageLabel{nullptr};
-    QPushButton *m_clearImageButton{nullptr};
-    QPushButton *m_calendarButton{nullptr};
+
+    // --- Notification banner ---
     QLabel *m_notificationBanner{nullptr};
-    QImage m_pendingImage;
-    QSettings m_settings{QStringLiteral("TitanAI"), QStringLiteral("TitanAI")};
-    QString m_projectDirectory;
-    QString m_buildCommand;
-    bool m_modelReady{false};
-    bool m_streamActive{false};
-    bool m_streamBlockStarted{false};
+
+    // --- Voice Settings button (kept for dialog access) ---
+    QPushButton *m_voiceSettingsButton{nullptr};
+    QPushButton *m_calendarButton{nullptr};
 };
 
 #endif // TITANAI_MAIN_WINDOW_HPP
