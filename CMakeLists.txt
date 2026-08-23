@@ -32,6 +32,7 @@ add_executable(TitanAI
     src/llm/ollama_client.cpp
     src/llm/ollama_manager.cpp
     src/tools/code_fixer.cpp
+    src/tools/disk_cleanup.cpp
     src/tools/file_organizer.cpp
     src/tools/package_manager.cpp
     src/tools/system_info.cpp

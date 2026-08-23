@@ -8,6 +8,7 @@
 #include "llm/ollama_client.hpp"
 #include "llm/ollama_manager.hpp"
 #include "tools/code_fixer.hpp"
+#include "tools/disk_cleanup.hpp"
 #include "tools/file_organizer.hpp"
 #include "tools/package_manager.hpp"
 #include "tools/system_info.hpp"
@@ -47,6 +48,7 @@ public:
     [[nodiscard]] CalendarManager &calendarManager();
     [[nodiscard]] NotificationManager &notificationManager();
     [[nodiscard]] FileOrganizer &fileOrganizer();
+    [[nodiscard]] DiskCleanup &diskCleanup();
 
 signals:
     void responseChunkReceived(const QString &chunk);
@@ -79,6 +81,7 @@ private:
     bool handleCameraQuery(const QString &message);
     bool handleCalendarQuery(const QString &message);
     bool handleFileOrganizationQuery(const QString &message);
+    bool handleDiskCleanupQuery(const QString &message);
     bool handlePackageInstallQuery(const QString &message);
     bool handleAutoFixToggleQuery(const QString &message);
     bool handleCodeFixRequestQuery(const QString &message);
@@ -104,6 +107,7 @@ private:
     CalendarManager m_calendarManager;
     NotificationManager m_notificationManager;
     FileOrganizer m_fileOrganizer;
+    DiskCleanup m_diskCleanup;
     bool m_autoFixEnabled{false};
     bool m_codeFixInProgress{false};
     QString m_projectDirectory;
