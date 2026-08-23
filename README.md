@@ -72,6 +72,26 @@ Directory sizes are measured with a batched background scan so the UI stays resp
 Suggestions are previews only — TitanAI never deletes files on its own; run the suggested
 commands yourself after reviewing them.
 
+## Update Checker
+
+TitanAI tracks your installed package versions and tells you what can be updated:
+
+- Click **Check for Updates** in the Developer Hub (or ask in the chat):
+  - *"check my system for updates"*
+  - *"are there any pending updates"*
+  - *"upgrade my packages"*
+- **Installed package tracking** reads every installed package and its version with
+  `pacman -Q` and reports the total count.
+- **Update detection** compares installed versions against the repositories:
+  - Official repos via `checkupdates` (pacman-contrib) — safe, unprivileged, never
+    touches the real database. Falls back to `pacman -Qu` (last synced state) if it is
+    not installed.
+  - AUR packages via `paru -Qua` or `yay -Qua`, when a helper is available.
+- The report lists every outdated package (`old -> new`), grouped official-first, and
+  suggests the commands to apply them (`sudo pacman -Syu`, `paru -Syu`).
+
+TitanAI never installs anything on its own — review the list first, then update yourself.
+
 ## Voice Features
 
 TitanAI includes a fully local voice assistant built on top of the chat GUI:

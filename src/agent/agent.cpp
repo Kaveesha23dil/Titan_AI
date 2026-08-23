@@ -72,6 +72,10 @@ void Agent::sendMessage(const QString &message)
         return;
     }
 
+    if (handleUpdateCheckerQuery(message)) {
+        return;
+    }
+
     if (handlePackageInstallQuery(message)) {
         return;
     }
@@ -833,6 +837,11 @@ DiskCleanup &Agent::diskCleanup()
     return m_diskCleanup;
 }
 
+UpdateChecker &Agent::updateChecker()
+{
+    return m_updateChecker;
+}
+
 bool Agent::handleCalendarQuery(const QString &message)
 {
     const QString lower = message.toLower().simplified();
@@ -1065,6 +1074,58 @@ bool Agent::handleDiskCleanupQuery(const QString &message)
     emit responseReceived(
         QStringLiteral("Analyzing disk usage and looking for safe cleanup opportunities. "
                        "The full report will appear here shortly."));
+
+    return true;
+}
+
+bool Agent::handleUpdateCheckerQuery(const QString &message)
+{
+    const QString lower = message.toLower().simplified();
+
+    static const QStringList informationalHints = {
+        QStringLiteral("how to"),
+        QStringLiteral("how do i"),
+        QStringLiteral("how can i"),
+        QStringLiteral("what is"),
+        QStringLiteral("explain"),
+        QStringLiteral("guide"),
+        QStringLiteral("tutorial"),
+    };
+    for (const QString &hint : informationalHints) {
+        if (lower.contains(hint)) {
+            return false;
+        }
+    }
+
+    const bool wantsCheck = (lower.contains(QStringLiteral("check")) &&
+                             lower.contains(QStringLiteral("update"))) ||
+                            lower.contains(QStringLiteral("pending update")) ||
+                            lower.contains(QStringLiteral("available update")) ||
+                            lower.contains(QStringLiteral("updates available")) ||
+                            lower.contains(QStringLiteral("outdated")) ||
+                            ((lower.contains(QStringLiteral("update")) ||
+                              lower.contains(QStringLiteral("upgrade"))) &&
+                             (lower.contains(QStringLiteral("package")) ||
+                              lower.contains(QStringLiteral("system")) ||
+                              lower.contains(QStringLiteral("pacman")) ||
+                              lower.contains(QStringLiteral("repo"))));
+
+    if (!wantsCheck) {
+        return false;
+    }
+
+    if (m_updateChecker.isChecking()) {
+        emit responseReceived(
+            QStringLiteral("An update check is already running. The report will appear "
+                           "here when it finishes."));
+        return true;
+    }
+
+    m_updateChecker.startCheck();
+
+    emit responseReceived(
+        QStringLiteral("Checking your installed packages against the latest repository "
+                       "versions. The report will appear here shortly."));
 
     return true;
 }

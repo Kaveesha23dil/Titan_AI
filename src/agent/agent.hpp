@@ -12,6 +12,7 @@
 #include "tools/file_organizer.hpp"
 #include "tools/package_manager.hpp"
 #include "tools/system_info.hpp"
+#include "tools/update_checker.hpp"
 #include "learning/task_tracker.hpp"
 #include "learning/activity_analyzer.hpp"
 #include "learning/suggestion_engine.hpp"
@@ -49,6 +50,7 @@ public:
     [[nodiscard]] NotificationManager &notificationManager();
     [[nodiscard]] FileOrganizer &fileOrganizer();
     [[nodiscard]] DiskCleanup &diskCleanup();
+    [[nodiscard]] UpdateChecker &updateChecker();
 
 signals:
     void responseChunkReceived(const QString &chunk);
@@ -82,6 +84,7 @@ private:
     bool handleCalendarQuery(const QString &message);
     bool handleFileOrganizationQuery(const QString &message);
     bool handleDiskCleanupQuery(const QString &message);
+    bool handleUpdateCheckerQuery(const QString &message);
     bool handlePackageInstallQuery(const QString &message);
     bool handleAutoFixToggleQuery(const QString &message);
     bool handleCodeFixRequestQuery(const QString &message);
@@ -108,6 +111,7 @@ private:
     NotificationManager m_notificationManager;
     FileOrganizer m_fileOrganizer;
     DiskCleanup m_diskCleanup;
+    UpdateChecker m_updateChecker;
     bool m_autoFixEnabled{false};
     bool m_codeFixInProgress{false};
     QString m_projectDirectory;

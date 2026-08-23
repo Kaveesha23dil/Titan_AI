@@ -168,6 +168,26 @@ QIcon MainWindow::createVectorIcon(const QString &name, int size)
         p.drawPath(fan);
         p.drawLine(QPointF(s * 0.30, s * 0.74), QPointF(s * 0.25, s - m));
         p.drawLine(QPointF(s * 0.44, s * 0.66), QPointF(s * 0.41, s - m));
+    } else if (name == QLatin1String("update")) {
+        // Circular refresh arrows
+        QRectF circle(m, m, s - 2 * m, s - 2 * m);
+        p.drawArc(circle, 45 * 16, 130 * 16);
+        p.drawArc(circle, 225 * 16, 130 * 16);
+        const qreal cx = s / 2, cy = s / 2, r = (s - 2 * m) / 2;
+        auto arrowHead = [&](qreal angleDeg) {
+            const qreal a = angleDeg * M_PI / 180.0;
+            // Position on the circle; Qt y-axis is flipped, hence minus sin.
+            const QPointF pt(cx + r * std::cos(a), cy - r * std::sin(a));
+            // Tangent direction for counter-clockwise motion.
+            const QPointF tangent(-std::sin(a), -std::cos(a));
+            QPen headPen(pen);
+            headPen.setWidthF(1.4);
+            p.setPen(headPen);
+            p.drawLine(pt, pt + tangent * 3.2);
+            p.drawLine(pt, pt - QPointF(-tangent.y(), tangent.x()) * 3.2);
+        };
+        arrowHead(180.0);   // end of first arc
+        arrowHead(360.0);   // end of second arc
     } else if (name == QLatin1String("voice_settings")) {
         // Sliders icon
         for (int i = 0; i < 3; ++i) {
@@ -430,6 +450,9 @@ QWidget *MainWindow::createWelcomePage()
         {QStringLiteral("🧹"), QStringLiteral("Disk Cleanup"),
          QStringLiteral("Monitor disk usage and find\nsafe cleanup actions."),
          QStringLiteral("Analyze my disk usage for cleanup")},
+        {QStringLiteral("🔄"), QStringLiteral("Check Updates"),
+         QStringLiteral("See which packages have\nnewer versions available."),
+         QStringLiteral("Check my system for updates")},
     };
 
     for (const auto &sg : suggestions) {
@@ -740,6 +763,32 @@ QWidget *MainWindow::createDevHubPage()
     cleanupLayout->addWidget(m_diskCleanupButton, 0, Qt::AlignLeft);
 
     layout->addWidget(cleanupBox);
+
+    // Update Checker section
+    auto *updatesBox = new QGroupBox(QStringLiteral("Update Checker"), page);
+    auto *updatesLayout = new QVBoxLayout(updatesBox);
+    updatesLayout->setSpacing(12);
+
+    auto *updatesDesc = new QLabel(
+        QStringLiteral("Track installed package versions and see which packages have "
+                       "newer versions available (official repositories and AUR)."),
+        updatesBox);
+    updatesDesc->setWordWrap(true);
+    updatesDesc->setStyleSheet(QStringLiteral("QLabel { color: %1; font-size: 13px; }").arg(Col::TextSecondary));
+    updatesLayout->addWidget(updatesDesc);
+
+    m_checkUpdatesButton = new QPushButton(QStringLiteral("  Check for Updates"), updatesBox);
+    m_checkUpdatesButton->setIcon(createVectorIcon(QStringLiteral("update"), 20));
+    m_checkUpdatesButton->setToolTip(
+        QStringLiteral("Compare installed package versions with the repositories and "
+                       "suggest update commands"));
+    m_checkUpdatesButton->setStyleSheet(QStringLiteral(
+        "QPushButton { background: %1; color: white; border: none; font-weight: 600; padding: 10px 20px; } "
+        "QPushButton:hover { background: %2; }"
+    ).arg(Col::Accent, Col::AccentGlow));
+    updatesLayout->addWidget(m_checkUpdatesButton, 0, Qt::AlignLeft);
+
+    layout->addWidget(updatesBox);
     layout->addStretch(1);
 
     return page;
@@ -1052,6 +1101,30 @@ MainWindow::MainWindow(QWidget *parent)
                 m_diskCleanupButton->setEnabled(true);
                 appendMessage(QStringLiteral("Error"), error, Col::Danger);
             });
+    connect(m_checkUpdatesButton, &QPushButton::clicked, this, &MainWindow::onCheckUpdatesClicked);
+
+    // Update checker
+    UpdateChecker &updateChecker = m_agent.updateChecker();
+    connect(&updateChecker, &UpdateChecker::checkStarted, this,
+            [this]() {
+                m_checkUpdatesButton->setEnabled(false);
+                navigateTo(1); // Switch to chat to show results
+                appendPlainLine(
+                    QStringLiteral("Checking installed packages against the repositories..."),
+                    Col::TextMuted);
+            });
+    connect(&updateChecker, &UpdateChecker::checkFinished, this,
+            [this](int) {
+                m_checkUpdatesButton->setEnabled(true);
+                appendMessage(QStringLiteral("TitanAI"),
+                              m_agent.updateChecker().formatUpdateReport(),
+                              Col::AccentGlow);
+            });
+    connect(&updateChecker, &UpdateChecker::checkError, this,
+            [this](const QString &error) {
+                m_checkUpdatesButton->setEnabled(true);
+                appendMessage(QStringLiteral("Error"), error, Col::Danger);
+            });
     connect(&m_agent, &Agent::autoFixEnabledChanged, this, [this](bool enabled) {
         m_settings.setValue(QStringLiteral("autoFixEnabled"), enabled);
         const QSignalBlocker blocker(m_autoFixCheck);
@@ -1316,6 +1389,14 @@ void MainWindow::onDiskCleanupClicked()
         return;
     }
     m_agent.diskCleanup().startAnalysis();
+}
+
+void MainWindow::onCheckUpdatesClicked()
+{
+    if (m_agent.updateChecker().isChecking()) {
+        return;
+    }
+    m_agent.updateChecker().startCheck();
 }
 
 void MainWindow::startStreamingBlock()

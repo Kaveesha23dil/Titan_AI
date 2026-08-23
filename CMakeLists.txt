@@ -36,6 +36,7 @@ add_executable(TitanAI
     src/tools/file_organizer.cpp
     src/tools/package_manager.cpp
     src/tools/system_info.cpp
+    src/tools/update_checker.cpp
     src/voice/audio_capture.cpp
     src/voice/speech_recognizer.cpp
     src/voice/text_to_speech.cpp
