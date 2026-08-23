@@ -156,6 +156,18 @@ QIcon MainWindow::createVectorIcon(const QString &name, int size)
         p.drawRoundedRect(r, 3, 3);
         p.drawLine(QPointF(m, m + 3 + (s - 2 * m - 3) * 0.22), QPointF(s * 0.42, m + 3 + (s - 2 * m - 3) * 0.22));
         p.drawLine(QPointF(m, m + 3), QPointF(m + (s - 2 * m) * 0.3, m + 3));
+    } else if (name == QLatin1String("cleanup")) {
+        // Broom: diagonal handle plus bristle fan
+        const QPointF tip(s * 0.52, s * 0.48);
+        p.drawLine(QPointF(s * 0.80, s * 0.20), tip);
+        QPainterPath fan;
+        fan.moveTo(tip.x(), tip.y() - s * 0.08);
+        fan.lineTo(s * 0.16, s - m);
+        fan.quadTo(s * 0.36, s - m + 1, s * 0.68, s - m);
+        fan.closeSubpath();
+        p.drawPath(fan);
+        p.drawLine(QPointF(s * 0.30, s * 0.74), QPointF(s * 0.25, s - m));
+        p.drawLine(QPointF(s * 0.44, s * 0.66), QPointF(s * 0.41, s - m));
     } else if (name == QLatin1String("voice_settings")) {
         // Sliders icon
         for (int i = 0; i < 3; ++i) {
@@ -415,6 +427,9 @@ QWidget *MainWindow::createWelcomePage()
         {QStringLiteral("📁"), QStringLiteral("Organize Files"),
          QStringLiteral("Find duplicates and get\nfolder structure ideas."),
          QStringLiteral("Find duplicate files in my project")},
+        {QStringLiteral("🧹"), QStringLiteral("Disk Cleanup"),
+         QStringLiteral("Monitor disk usage and find\nsafe cleanup actions."),
+         QStringLiteral("Analyze my disk usage for cleanup")},
     };
 
     for (const auto &sg : suggestions) {
@@ -699,6 +714,32 @@ QWidget *MainWindow::createDevHubPage()
     organizeLayout->addWidget(m_organizeButton, 0, Qt::AlignLeft);
 
     layout->addWidget(organizeBox);
+
+    // Disk Cleanup section
+    auto *cleanupBox = new QGroupBox(QStringLiteral("Disk Cleanup"), page);
+    auto *cleanupLayout = new QVBoxLayout(cleanupBox);
+    cleanupLayout->setSpacing(12);
+
+    auto *cleanupDesc = new QLabel(
+        QStringLiteral("Monitor disk usage per mount point and get suggestions for safe "
+                       "cleanup actions (package cache, user cache, trash, journal logs, "
+                       "orphan packages)."),
+        cleanupBox);
+    cleanupDesc->setWordWrap(true);
+    cleanupDesc->setStyleSheet(QStringLiteral("QLabel { color: %1; font-size: 13px; }").arg(Col::TextSecondary));
+    cleanupLayout->addWidget(cleanupDesc);
+
+    m_diskCleanupButton = new QPushButton(QStringLiteral("  Analyze Disk Usage"), cleanupBox);
+    m_diskCleanupButton->setIcon(createVectorIcon(QStringLiteral("cleanup"), 20));
+    m_diskCleanupButton->setToolTip(
+        QStringLiteral("Analyze disk usage and get safe cleanup suggestions"));
+    m_diskCleanupButton->setStyleSheet(QStringLiteral(
+        "QPushButton { background: %1; color: white; border: none; font-weight: 600; padding: 10px 20px; } "
+        "QPushButton:hover { background: %2; }"
+    ).arg(Col::Accent, Col::AccentGlow));
+    cleanupLayout->addWidget(m_diskCleanupButton, 0, Qt::AlignLeft);
+
+    layout->addWidget(cleanupBox);
     layout->addStretch(1);
 
     return page;
@@ -986,6 +1027,31 @@ MainWindow::MainWindow(QWidget *parent)
                 m_organizeButton->setEnabled(true);
                 appendMessage(QStringLiteral("Error"), error, Col::Danger);
             });
+    connect(m_diskCleanupButton, &QPushButton::clicked, this, &MainWindow::onDiskCleanupClicked);
+
+    // Disk cleanup
+    DiskCleanup &diskCleanup = m_agent.diskCleanup();
+    connect(&diskCleanup, &DiskCleanup::analysisStarted, this,
+            [this]() {
+                m_diskCleanupButton->setEnabled(false);
+                navigateTo(1); // Switch to chat to show results
+                appendPlainLine(
+                    QStringLiteral("Analyzing disk usage and looking for cleanup "
+                                   "opportunities..."),
+                    Col::TextMuted);
+            });
+    connect(&diskCleanup, &DiskCleanup::analysisFinished, this,
+            [this](quint64) {
+                m_diskCleanupButton->setEnabled(true);
+                appendMessage(QStringLiteral("TitanAI"),
+                              m_agent.diskCleanup().formatFullReport(),
+                              Col::AccentGlow);
+            });
+    connect(&diskCleanup, &DiskCleanup::analysisError, this,
+            [this](const QString &error) {
+                m_diskCleanupButton->setEnabled(true);
+                appendMessage(QStringLiteral("Error"), error, Col::Danger);
+            });
     connect(&m_agent, &Agent::autoFixEnabledChanged, this, [this](bool enabled) {
         m_settings.setValue(QStringLiteral("autoFixEnabled"), enabled);
         const QSignalBlocker blocker(m_autoFixCheck);
@@ -1242,6 +1308,14 @@ void MainWindow::onOrganizeClicked()
     const QString directory =
         m_projectDirectory.isEmpty() ? QDir::homePath() : m_projectDirectory;
     m_agent.fileOrganizer().startScan(directory);
+}
+
+void MainWindow::onDiskCleanupClicked()
+{
+    if (m_agent.diskCleanup().isAnalyzing()) {
+        return;
+    }
+    m_agent.diskCleanup().startAnalysis();
 }
 
 void MainWindow::startStreamingBlock()

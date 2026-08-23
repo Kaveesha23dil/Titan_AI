@@ -68,6 +68,10 @@ void Agent::sendMessage(const QString &message)
         return;
     }
 
+    if (handleDiskCleanupQuery(message)) {
+        return;
+    }
+
     if (handlePackageInstallQuery(message)) {
         return;
     }
@@ -824,6 +828,11 @@ FileOrganizer &Agent::fileOrganizer()
     return m_fileOrganizer;
 }
 
+DiskCleanup &Agent::diskCleanup()
+{
+    return m_diskCleanup;
+}
+
 bool Agent::handleCalendarQuery(const QString &message)
 {
     const QString lower = message.toLower().simplified();
@@ -999,6 +1008,63 @@ bool Agent::handleFileOrganizationQuery(const QString &message)
         QStringLiteral("Scanning '%1' for duplicate files and organization ideas. "
                        "The full report will appear here shortly.")
             .arg(directory));
+
+    return true;
+}
+
+bool Agent::handleDiskCleanupQuery(const QString &message)
+{
+    const QString lower = message.toLower().simplified();
+
+    static const QStringList informationalHints = {
+        QStringLiteral("how to"),
+        QStringLiteral("how do i"),
+        QStringLiteral("how can i"),
+        QStringLiteral("what is"),
+        QStringLiteral("explain"),
+        QStringLiteral("guide"),
+        QStringLiteral("tutorial"),
+    };
+    for (const QString &hint : informationalHints) {
+        if (lower.contains(hint)) {
+            return false;
+        }
+    }
+
+    const bool mentionsDisk = lower.contains(QStringLiteral("disk")) ||
+                              lower.contains(QStringLiteral("storage"));
+    const bool wantsUsageReport = mentionsDisk &&
+                                  (lower.contains(QStringLiteral("usage")) ||
+                                   lower.contains(QStringLiteral("space")) ||
+                                   lower.contains(QStringLiteral("full")));
+    const bool wantsCleanup = lower.contains(QStringLiteral("cleanup")) ||
+                              lower.contains(QStringLiteral("clean up")) ||
+                              lower.contains(QStringLiteral("clean-up")) ||
+                              lower.contains(QStringLiteral("tidy up"));
+    const bool wantsFreeSpace = lower.contains(QStringLiteral("free up")) ||
+                                lower.contains(QStringLiteral("free space")) ||
+                                lower.contains(QStringLiteral("release space"));
+    const bool wantsCacheClean = lower.contains(QStringLiteral("cache")) &&
+                                 (lower.contains(QStringLiteral("clean")) ||
+                                  lower.contains(QStringLiteral("clear")) ||
+                                  lower.contains(QStringLiteral("size")));
+
+    if (!wantsUsageReport && !wantsCleanup && !wantsFreeSpace && !wantsCacheClean) {
+        return false;
+    }
+
+    if (m_diskCleanup.isAnalyzing()) {
+        emit responseReceived(
+            QStringLiteral("A disk cleanup analysis is already running. The report will "
+                           "appear here when it finishes."));
+        return true;
+    }
+
+    m_diskCleanup.startAnalysis();
+
+    emit responseReceived(
+        QStringLiteral("Analyzing disk usage and looking for safe cleanup opportunities. "
+                       "The full report will appear here shortly."));
 
     return true;
 }

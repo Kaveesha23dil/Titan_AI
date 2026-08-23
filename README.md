@@ -50,6 +50,28 @@ TitanAI can help you tidy up messy folders. It works fully offline on any direct
 
 Suggestions are previews only — TitanAI never moves or deletes files on its own.
 
+## Disk Cleanup
+
+TitanAI can monitor your disk usage and suggest safe cleanup actions, tuned for Arch Linux:
+
+- Click **Analyze Disk Usage** in the Developer Hub (or ask in the chat):
+  - *"analyze my disk usage for cleanup"*
+  - *"free up disk space"*
+  - *"clean up my cache"*
+- **Disk usage monitoring** lists every real mounted file system with total/used/free
+  space and a fill percentage, and warns when a volume is nearly full.
+- **Cleanup suggestions** measure common space hogs and propose safe commands:
+  - Pacman package cache (`sudo paccache -rk1`)
+  - User application cache (`~/.cache`)
+  - Trash (`~/.local/share/Trash`)
+  - Systemd core dumps (`/var/lib/systemd/coredump`)
+  - Journal logs (`journalctl --disk-usage`, then `journalctl --vacuum-size`)
+  - Orphan packages (`pacman -Qtdq`, then `pacman -Rns`)
+
+Directory sizes are measured with a batched background scan so the UI stays responsive.
+Suggestions are previews only — TitanAI never deletes files on its own; run the suggested
+commands yourself after reviewing them.
+
 ## Voice Features
 
 TitanAI includes a fully local voice assistant built on top of the chat GUI:
