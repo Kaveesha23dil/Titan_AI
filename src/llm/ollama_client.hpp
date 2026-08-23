@@ -19,6 +19,7 @@ public:
     void sendPrompt(const QString &prompt);
     void sendImagePrompt(const QString &prompt, const QList<QByteArray> &encodedImages);
     void requestCompletion(const QString &prompt);
+    void requestImageCompletion(const QString &prompt, const QList<QByteArray> &encodedImages);
     void setModel(const QString &model);
     [[nodiscard]] const QString& model() const;
     void warmUp();

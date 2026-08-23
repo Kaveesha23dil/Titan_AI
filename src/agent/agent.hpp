@@ -12,6 +12,7 @@
 #include "tools/file_organizer.hpp"
 #include "tools/package_manager.hpp"
 #include "tools/system_info.hpp"
+#include "tools/ui_developer.hpp"
 #include "tools/update_checker.hpp"
 #include "learning/task_tracker.hpp"
 #include "learning/activity_analyzer.hpp"
@@ -52,6 +53,12 @@ public:
     [[nodiscard]] DiskCleanup &diskCleanup();
     [[nodiscard]] UpdateChecker &updateChecker();
 
+    // UI Design-to-Code feature
+    void developUi(const QImage &designImage,
+                   const QString &requirements,
+                   const QString &branchName,
+                   UiDeveloper::Framework framework = UiDeveloper::Framework::AutoDetect);
+
 signals:
     void responseChunkReceived(const QString &chunk);
     void responseReceived(const QString &response);
@@ -71,6 +78,10 @@ signals:
     void calendarEventsReady(const QString &eventsSummary);
     void calendarNotificationAlert(const QString &title, const QString &message);
 
+    // UI Developer signals
+    void uiDevelopmentProgress(const QString &message);
+    void uiDevelopmentFinished(bool success, const QString &summary, const QString &branchName);
+
 private slots:
     void onModelReady(const QString &model);
     void onPackageManagerFinished(bool success, const QString &summary);
@@ -88,6 +99,7 @@ private:
     bool handlePackageInstallQuery(const QString &message);
     bool handleAutoFixToggleQuery(const QString &message);
     bool handleCodeFixRequestQuery(const QString &message);
+    bool handleUiDevelopmentQuery(const QString &message, const QImage &image = QImage());
     void startPasteFix(const QString &message);
     void startBuildFix();
     void requestFix(const QList<CodeFixer::BuildError> &errors);
@@ -112,6 +124,7 @@ private:
     FileOrganizer m_fileOrganizer;
     DiskCleanup m_diskCleanup;
     UpdateChecker m_updateChecker;
+    UiDeveloper m_uiDeveloper;
     bool m_autoFixEnabled{false};
     bool m_codeFixInProgress{false};
     QString m_projectDirectory;

@@ -151,6 +151,44 @@ void OllamaClient::requestCompletion(const QString &prompt)
     });
 }
 
+void OllamaClient::requestImageCompletion(const QString &prompt,
+                                          const QList<QByteArray> &encodedImages)
+{
+    QString trimmedPrompt = prompt.trimmed();
+    if (trimmedPrompt.isEmpty() || encodedImages.isEmpty()) {
+        return;
+    }
+
+    QNetworkRequest request(m_endpointUrl);
+    request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+
+    QJsonArray imagesArray;
+    for (const QByteArray &img : encodedImages) {
+        imagesArray.append(QString::fromLatin1(img));
+    }
+
+    QJsonArray messages;
+    QJsonObject userMessageObj;
+    userMessageObj[QStringLiteral("role")]    = QStringLiteral("user");
+    userMessageObj[QStringLiteral("content")] = trimmedPrompt;
+    userMessageObj[QStringLiteral("images")]  = imagesArray;
+    messages.append(userMessageObj);
+
+    QJsonObject payloadObj;
+    payloadObj[QStringLiteral("model")]      = m_model;
+    payloadObj[QStringLiteral("messages")]   = messages;
+    payloadObj[QStringLiteral("stream")]     = false;
+    payloadObj[QStringLiteral("keep_alive")] = -1;
+
+    QNetworkReply *reply = m_networkManager.post(
+        request, QJsonDocument(payloadObj).toJson(QJsonDocument::Compact));
+
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        handleCompletionReply(reply);
+        reply->deleteLater();
+    });
+}
+
 void OllamaClient::handleCompletionReply(QNetworkReply *reply)
 {
     int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
