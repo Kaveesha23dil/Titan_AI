@@ -9,14 +9,17 @@
 #include "voice/voice_engine.hpp"
 
 class QCheckBox;
-class QLabel;
-class QLineEdit;
-class QProgressBar;
-class QPushButton;
-class QStackedWidget;
-class QTextBrowser;
-class QVBoxLayout;
-class QWidget;
+ class QComboBox;
+ class QLabel;
+ class QLineEdit;
+ class QPlainTextEdit;
+ class QProgressBar;
+ class QPushButton;
+ class QScrollArea;
+ class QStackedWidget;
+ class QTextBrowser;
+ class QVBoxLayout;
+ class QWidget;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -39,6 +42,12 @@ private slots:
     void onOrganizeClicked();
     void onDiskCleanupClicked();
     void onCheckUpdatesClicked();
+
+    void onUiDevelopmentProgress(const QString &message);
+    void onUiDevelopmentFinished(bool success, const QString &summary, const QString &branchName);
+    void onGenerateUiClicked();
+    void onUiDesignImageClicked();
+    void onClearUiDesignImage();
 
     void onVoicePartial(const QString &text);
     void onVoiceFinal(const QString &text);
@@ -130,6 +139,18 @@ private:
     QPushButton *m_organizeButton{nullptr};
     QPushButton *m_diskCleanupButton{nullptr};
     QPushButton *m_checkUpdatesButton{nullptr};
+
+    // --- UI Design-to-Code widgets ---
+    QLabel *m_uiDesignPreview{nullptr};
+    QPushButton *m_uiDesignPickBtn{nullptr};
+    QPushButton *m_uiDesignClearBtn{nullptr};
+    QComboBox *m_uiFrameworkCombo{nullptr};
+    QLineEdit *m_uiBranchEdit{nullptr};
+    QPlainTextEdit *m_uiRequirementsEdit{nullptr};
+    QPushButton *m_uiGenerateButton{nullptr};
+    QProgressBar *m_uiProgressBar{nullptr};
+    QLabel *m_uiStatusLabel{nullptr};
+    QImage m_uiDesignImage;
 
     // --- Notification banner ---
     QLabel *m_notificationBanner{nullptr};

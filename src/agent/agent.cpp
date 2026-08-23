@@ -36,6 +36,10 @@ Agent::Agent(QObject *parent)
             });
 
     m_suggestionEngine.initialize(&m_taskTracker, &m_activityAnalyzer);
+
+    // UI Developer
+    connect(&m_uiDeveloper, &UiDeveloper::progress, this, &Agent::uiDevelopmentProgress);
+    connect(&m_uiDeveloper, &UiDeveloper::finished, this, &Agent::uiDevelopmentFinished);
 }
 
 void Agent::initializeModel(const QString &model)
@@ -85,6 +89,10 @@ void Agent::sendMessage(const QString &message)
     }
 
     if (handleCodeFixRequestQuery(message)) {
+        return;
+    }
+
+    if (handleUiDevelopmentQuery(message)) {
         return;
     }
 
@@ -1128,4 +1136,159 @@ bool Agent::handleUpdateCheckerQuery(const QString &message)
                        "versions. The report will appear here shortly."));
 
     return true;
+}
+
+// ─────────────────────────────────────────────────────────────
+//  UI Design-to-Code
+// ─────────────────────────────────────────────────────────────
+bool Agent::handleUiDevelopmentQuery(const QString &message, const QImage &image)
+{
+    const QString lower = message.toLower();
+
+    static const QStringList kTriggers = {
+        QStringLiteral("develop this ui"),
+        QStringLiteral("implement this ui"),
+        QStringLiteral("implement this design"),
+        QStringLiteral("code this ui"),
+        QStringLiteral("code this design"),
+        QStringLiteral("build this ui"),
+        QStringLiteral("create this ui"),
+        QStringLiteral("generate this ui"),
+        QStringLiteral("develop ui"),
+        QStringLiteral("implement ui"),
+        QStringLiteral("build ui from"),
+        QStringLiteral("create ui from"),
+        QStringLiteral("ui from this image"),
+        QStringLiteral("design this screen"),
+        QStringLiteral("implement this screen"),
+        QStringLiteral("develop this screen"),
+    };
+
+    bool triggered = false;
+    for (const QString &trigger : kTriggers) {
+        if (lower.contains(trigger)) {
+            triggered = true;
+            break;
+        }
+    }
+
+    if (!triggered) {
+        return false;
+    }
+
+    if (m_uiDeveloper.isBusy()) {
+        emit responseReceived(
+            QStringLiteral("A UI generation is already in progress. Please wait for it to finish."));
+        return true;
+    }
+
+    if (m_projectDirectory.isEmpty()) {
+        emit responseReceived(
+            QStringLiteral("Please set a Project Directory in the Developer Hub before requesting UI generation."));
+        return true;
+    }
+
+    // Auto-detect framework
+    const UiDeveloper::Framework fw = UiDeveloper::detectFramework(m_projectDirectory);
+    const QString fwName = UiDeveloper::frameworkName(fw);
+
+    emit responseReceived(
+        QStringLiteral("🚀 Starting UI generation for **%1** project.\n"
+                       "Framework detected: %2\n"
+                       "I will ask the AI to generate the code and create a git branch for you."
+                       ).arg(m_projectDirectory, fwName));
+
+    developUi(image, message, QString(), fw);
+    return true;
+}
+
+void Agent::developUi(const QImage &designImage,
+                      const QString &requirements,
+                      const QString &branchName,
+                      UiDeveloper::Framework framework)
+{
+    if (m_uiDeveloper.isBusy()) {
+        emit uiDevelopmentProgress(QStringLiteral("UI generation already in progress."));
+        return;
+    }
+
+    // Resolve framework
+    UiDeveloper::Framework fw = framework;
+    if (fw == UiDeveloper::Framework::AutoDetect) {
+        fw = UiDeveloper::detectFramework(m_projectDirectory);
+    }
+
+    // Build branch name
+    QString branch = branchName.trimmed();
+    if (branch.isEmpty()) {
+        // Sanitize requirements into a slug
+        QString slug = requirements.toLower();
+        slug.replace(QRegularExpression(QStringLiteral("[^a-z0-9]+")), QStringLiteral("-"));
+        slug = slug.left(40).remove(QRegularExpression(QStringLiteral("-+$")));
+        branch = QStringLiteral("feat/ui-%1").arg(slug.isEmpty() ? QStringLiteral("design") : slug);
+    }
+
+    emit uiDevelopmentProgress(QStringLiteral("Building prompt for %1 framework..."
+        ).arg(UiDeveloper::frameworkName(fw)));
+
+    const QString prompt = UiDeveloper::buildUiGenerationPrompt(requirements, fw, m_projectDirectory);
+
+    if (!designImage.isNull()) {
+        // Vision-based: encode image and do single-shot structured completion
+        QImage scaled = designImage;
+        constexpr int kMaxDim = 1024;
+        if (qMax(scaled.width(), scaled.height()) > kMaxDim) {
+            scaled = scaled.scaled(kMaxDim, kMaxDim, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        }
+        QByteArray bytes;
+        QBuffer buffer(&bytes);
+        buffer.open(QIODevice::WriteOnly);
+        scaled.save(&buffer, "JPEG", 85);
+
+        emit uiDevelopmentProgress(QStringLiteral("Sending image + requirements to AI model..."));
+
+        // We use requestImageCompletion for a non-streaming structured response
+        // Wire a one-shot connection to handle the result
+        const QString capturedBranch = branch;
+        const QString capturedDir    = m_projectDirectory;
+        QMetaObject::Connection *connPtr = new QMetaObject::Connection;
+        *connPtr = connect(&m_ollamaClient, &OllamaClient::completionReceived, this,
+            [this, connPtr, capturedBranch, capturedDir](const QString &response) {
+                disconnect(*connPtr);
+                delete connPtr;
+                m_uiDeveloper.implementFromLlmOutput(response, capturedDir, capturedBranch);
+            });
+        QMetaObject::Connection *errConnPtr = new QMetaObject::Connection;
+        *errConnPtr = connect(&m_ollamaClient, &OllamaClient::completionError, this,
+            [this, errConnPtr](const QString &error) {
+                disconnect(*errConnPtr);
+                delete errConnPtr;
+                emit uiDevelopmentFinished(false,
+                    QStringLiteral("AI model error: %1").arg(error), QString());
+            });
+
+        m_ollamaClient.requestImageCompletion(prompt, {bytes.toBase64()});
+    } else {
+        // Text-only: use non-streaming completion
+        const QString capturedBranch = branch;
+        const QString capturedDir    = m_projectDirectory;
+        QMetaObject::Connection *connPtr = new QMetaObject::Connection;
+        *connPtr = connect(&m_ollamaClient, &OllamaClient::completionReceived, this,
+            [this, connPtr, capturedBranch, capturedDir](const QString &response) {
+                disconnect(*connPtr);
+                delete connPtr;
+                m_uiDeveloper.implementFromLlmOutput(response, capturedDir, capturedBranch);
+            });
+        QMetaObject::Connection *errConnPtr = new QMetaObject::Connection;
+        *errConnPtr = connect(&m_ollamaClient, &OllamaClient::completionError, this,
+            [this, errConnPtr](const QString &error) {
+                disconnect(*errConnPtr);
+                delete errConnPtr;
+                emit uiDevelopmentFinished(false,
+                    QStringLiteral("AI model error: %1").arg(error), QString());
+            });
+
+        emit uiDevelopmentProgress(QStringLiteral("Sending requirements to AI model..."));
+        m_ollamaClient.requestCompletion(prompt);
+    }
 }

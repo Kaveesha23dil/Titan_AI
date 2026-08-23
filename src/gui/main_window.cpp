@@ -5,6 +5,7 @@
 
 #include <QBuffer>
 #include <QCheckBox>
+#include <QComboBox>
 #include <QDir>
 #include <QFileDialog>
 #include <QFont>
@@ -19,8 +20,10 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QPixmap>
+#include <QPlainTextEdit>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QScrollArea>
 #include <QScrollBar>
 #include <QSignalBlocker>
 #include <QStackedWidget>
@@ -658,64 +661,250 @@ QWidget *MainWindow::createChatPage()
 // ─────────────────────────────────────────────────────────────
 QWidget *MainWindow::createDevHubPage()
 {
-    auto *page = new QWidget(this);
-    auto *layout = new QVBoxLayout(page);
-    layout->setContentsMargins(40, 30, 40, 30);
-    layout->setSpacing(20);
+    // Outer wrapper — fills the page slot in QStackedWidget
+    auto *outer = new QWidget(this);
+    auto *outerLayout = new QVBoxLayout(outer);
+    outerLayout->setContentsMargins(0, 0, 0, 0);
+    outerLayout->setSpacing(0);
 
-    // Page header
-    auto *header = new QLabel(QStringLiteral("🛠  Developer Hub"), page);
-    header->setStyleSheet(QStringLiteral(
-        "QLabel { color: %1; font-size: 24px; font-weight: 700; }").arg(Col::TextPrimary));
-    layout->addWidget(header);
+    // ── Header bar ──────────────────────────────────────────
+    auto *headerBar = new QWidget(outer);
+    headerBar->setFixedHeight(56);
+    headerBar->setStyleSheet(QStringLiteral(
+        "QWidget { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 %1,stop:1 %2); "
+        "border-bottom: 1px solid %3; }").arg(Col::BgCard, Col::BgDeep, Col::Border));
 
-    auto *subtitle = new QLabel(
-        QStringLiteral("Configure auto-fix, build commands, and file organization tools."), page);
-    subtitle->setStyleSheet(QStringLiteral(
-        "QLabel { color: %1; font-size: 14px; }").arg(Col::TextMuted));
-    layout->addWidget(subtitle);
-    layout->addSpacing(10);
+    auto *headerLayout = new QHBoxLayout(headerBar);
+    headerLayout->setContentsMargins(20, 0, 20, 0);
 
-    // Auto-Fix section
-    auto *fixerBox = new QGroupBox(QStringLiteral("Auto-Fix Code Errors"), page);
+    auto *headerTitle = new QLabel(QStringLiteral("🛠  Developer Hub"), headerBar);
+    headerTitle->setStyleSheet(QStringLiteral(
+        "QLabel { color: %1; font-size: 17px; font-weight: 700; border: none; background: transparent; }"
+    ).arg(Col::TextPrimary));
+    headerLayout->addWidget(headerTitle);
+    headerLayout->addStretch(1);
+
+    auto *headerSub = new QLabel(
+        QStringLiteral("Build · Fix · Analyze · Generate UI"), headerBar);
+    headerSub->setStyleSheet(QStringLiteral(
+        "QLabel { color: %1; font-size: 11px; border: none; background: transparent; }"
+    ).arg(Col::TextMuted));
+    headerLayout->addWidget(headerSub);
+    outerLayout->addWidget(headerBar);
+
+    // ── Scroll area ─────────────────────────────────────────
+    auto *scrollArea = new QScrollArea(outer);
+    scrollArea->setWidgetResizable(true);
+    scrollArea->setFrameShape(QFrame::NoFrame);
+    scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    scrollArea->setStyleSheet(QStringLiteral(
+        "QScrollArea { background: %1; border: none; }").arg(Col::BgDeep));
+
+    auto *content = new QWidget(scrollArea);
+    content->setStyleSheet(QStringLiteral("background: %1;").arg(Col::BgDeep));
+    scrollArea->setWidget(content);
+
+    auto *layout = new QVBoxLayout(content);
+    layout->setContentsMargins(28, 24, 28, 32);
+    layout->setSpacing(16);
+
+    // Helper: creates a uniform styled button
+    auto makeActionBtn = [&](QWidget *parent, const QString &text,
+                              const QString &iconName, const QString &tooltip) {
+        auto *btn = new QPushButton(QStringLiteral("  ") + text, parent);
+        if (!iconName.isEmpty()) {
+            btn->setIcon(createVectorIcon(iconName, 20));
+        }
+        btn->setToolTip(tooltip);
+        btn->setCursor(Qt::PointingHandCursor);
+        btn->setStyleSheet(QStringLiteral(
+            "QPushButton { background: %1; color: white; border: none; font-weight: 600; "
+            "             padding: 10px 20px; border-radius: 8px; } "
+            "QPushButton:hover { background: %2; } "
+            "QPushButton:disabled { background: %3; color: %4; }"
+        ).arg(Col::Accent, Col::AccentGlow, Col::BgCard, Col::TextMuted));
+        return btn;
+    };
+
+    // ── ① Auto-Fix Code Errors ──────────────────────────────
+    auto *fixerBox = new QGroupBox(QStringLiteral("🔧  Auto-Fix Code Errors"), content);
     auto *fixerLayout = new QVBoxLayout(fixerBox);
     fixerLayout->setSpacing(12);
 
-    m_autoFixCheck = new QCheckBox(QStringLiteral("Enable automatic code-error fixing"), fixerBox);
+    m_autoFixCheck = new QCheckBox(
+        QStringLiteral("Enable automatic code-error fixing after build"), fixerBox);
     fixerLayout->addWidget(m_autoFixCheck);
 
-    // Project directory
     auto *projectRow = new QHBoxLayout;
     auto *projectLabel = new QLabel(QStringLiteral("Project:"), fixerBox);
-    projectLabel->setFixedWidth(60);
+    projectLabel->setFixedWidth(62);
     m_projectEdit = new QLineEdit(fixerBox);
     m_projectEdit->setPlaceholderText(QStringLiteral("e.g. /home/you/my-project"));
-    m_browseButton = new QPushButton(QStringLiteral("Browse"), fixerBox);
+    m_browseButton = new QPushButton(QStringLiteral("Browse…"), fixerBox);
+    m_browseButton->setCursor(Qt::PointingHandCursor);
+    m_browseButton->setStyleSheet(QStringLiteral(
+        "QPushButton { background: %1; border: 1px solid %2; border-radius: 6px; "
+        "              color: %3; padding: 6px 14px; }"
+        "QPushButton:hover { border-color: %4; color: %4; }"
+    ).arg(Col::BgCard, Col::Border, Col::TextSecondary, Col::AccentGlow));
     projectRow->addWidget(projectLabel);
     projectRow->addWidget(m_projectEdit, 1);
     projectRow->addWidget(m_browseButton);
     fixerLayout->addLayout(projectRow);
 
-    // Build command
     auto *buildRow = new QHBoxLayout;
-    auto *buildLabel = new QLabel(QStringLiteral("Build:"), fixerBox);
-    buildLabel->setFixedWidth(60);
+    auto *buildLabel = new QLabel(QStringLiteral("Build cmd:"), fixerBox);
+    buildLabel->setFixedWidth(62);
     m_buildEdit = new QLineEdit(fixerBox);
-    m_buildEdit->setPlaceholderText(QStringLiteral("e.g. cmake --build build  or  npm run build"));
-    m_buildFixButton = new QPushButton(QStringLiteral("Build && Fix"), fixerBox);
-    m_buildFixButton->setStyleSheet(QStringLiteral(
-        "QPushButton { background: %1; color: white; border: none; font-weight: 600; } "
-        "QPushButton:hover { background: %2; }"
-    ).arg(Col::Accent, Col::AccentGlow));
+    m_buildEdit->setPlaceholderText(QStringLiteral("cmake --build build   |   npm run build"));
+    m_buildFixButton = makeActionBtn(fixerBox, QStringLiteral("Build && Fix"),
+                                     QString(), QStringLiteral("Run build command and auto-fix errors"));
     buildRow->addWidget(buildLabel);
     buildRow->addWidget(m_buildEdit, 1);
     buildRow->addWidget(m_buildFixButton);
     fixerLayout->addLayout(buildRow);
-
     layout->addWidget(fixerBox);
 
-    // File Organization section
-    auto *organizeBox = new QGroupBox(QStringLiteral("File Organization"), page);
+    // ── ② UI Design to Code ─────────────────────────────────
+    auto *uiBox = new QGroupBox(QStringLiteral("🎨  UI Design to Code"), content);
+    auto *uiLayout = new QVBoxLayout(uiBox);
+    uiLayout->setSpacing(12);
+
+    auto *uiDesc = new QLabel(
+        QStringLiteral("Attach a UI wireframe / screenshot and describe what to build. "
+                       "TitanAI will generate production-ready code and commit it on a new git branch."),
+        uiBox);
+    uiDesc->setWordWrap(true);
+    uiDesc->setStyleSheet(QStringLiteral(
+        "QLabel { color: %1; font-size: 13px; }").arg(Col::TextSecondary));
+    uiLayout->addWidget(uiDesc);
+
+    // Design image row
+    auto *designRow = new QHBoxLayout;
+    designRow->setSpacing(10);
+
+    m_uiDesignPreview = new QLabel(QStringLiteral("No design image attached"), uiBox);
+    m_uiDesignPreview->setFixedSize(120, 80);
+    m_uiDesignPreview->setAlignment(Qt::AlignCenter);
+    m_uiDesignPreview->setWordWrap(true);
+    m_uiDesignPreview->setStyleSheet(QStringLiteral(
+        "QLabel { background: %1; border: 2px dashed %2; border-radius: 8px; "
+        "         color: %3; font-size: 11px; }").arg(Col::BgCard, Col::Border, Col::TextMuted));
+    designRow->addWidget(m_uiDesignPreview);
+
+    auto *imgBtnCol = new QVBoxLayout;
+    imgBtnCol->setSpacing(6);
+    m_uiDesignPickBtn = new QPushButton(QStringLiteral("📁  Select Image"), uiBox);
+    m_uiDesignPickBtn->setCursor(Qt::PointingHandCursor);
+    m_uiDesignPickBtn->setStyleSheet(QStringLiteral(
+        "QPushButton { background: %1; border: 1px solid %2; border-radius: 6px; "
+        "              color: %3; padding: 8px 14px; font-size: 13px; }"
+        "QPushButton:hover { border-color: %4; color: %4; }"
+    ).arg(Col::BgCard, Col::Border, Col::TextSecondary, Col::AccentGlow));
+    imgBtnCol->addWidget(m_uiDesignPickBtn);
+
+    m_uiDesignClearBtn = new QPushButton(QStringLiteral("✕  Clear Image"), uiBox);
+    m_uiDesignClearBtn->setCursor(Qt::PointingHandCursor);
+    m_uiDesignClearBtn->setEnabled(false);
+    m_uiDesignClearBtn->setStyleSheet(QStringLiteral(
+        "QPushButton { background: transparent; border: 1px solid %1; border-radius: 6px; "
+        "              color: %1; padding: 8px 14px; font-size: 13px; }"
+        "QPushButton:hover { border-color: %2; color: %2; }"
+        "QPushButton:disabled { color: %3; border-color: %4; }"
+    ).arg(Col::Danger, Col::Warning, Col::TextMuted, Col::Border));
+    imgBtnCol->addWidget(m_uiDesignClearBtn);
+    imgBtnCol->addStretch();
+    designRow->addLayout(imgBtnCol);
+    designRow->addStretch(1);
+    uiLayout->addLayout(designRow);
+
+    // Framework + Branch row
+    auto *fwBranchRow = new QHBoxLayout;
+    fwBranchRow->setSpacing(12);
+
+    auto *fwLabel = new QLabel(QStringLiteral("Framework:"), uiBox);
+    fwLabel->setFixedWidth(80);
+    m_uiFrameworkCombo = new QComboBox(uiBox);
+    m_uiFrameworkCombo->addItems({
+        QStringLiteral("Auto-detect"),
+        QStringLiteral("HTML / CSS / JS"),
+        QStringLiteral("React"),
+        QStringLiteral("Vue.js"),
+        QStringLiteral("Qt 6 C++"),
+        QStringLiteral("Flutter / Dart"),
+        QStringLiteral("Python"),
+    });
+    m_uiFrameworkCombo->setMinimumWidth(160);
+    fwBranchRow->addWidget(fwLabel);
+    fwBranchRow->addWidget(m_uiFrameworkCombo);
+
+    auto *branchLabel = new QLabel(QStringLiteral("Branch:"), uiBox);
+    branchLabel->setFixedWidth(55);
+    m_uiBranchEdit = new QLineEdit(uiBox);
+    m_uiBranchEdit->setPlaceholderText(QStringLiteral("feat/ui-design  (auto-generated if blank)"));
+    fwBranchRow->addWidget(branchLabel);
+    fwBranchRow->addWidget(m_uiBranchEdit, 1);
+    uiLayout->addLayout(fwBranchRow);
+
+    // Requirements box
+    auto *reqLabel = new QLabel(
+        QStringLiteral("Requirements / Description:"), uiBox);
+    reqLabel->setStyleSheet(QStringLiteral(
+        "QLabel { color: %1; font-size: 13px; font-weight: 600; }").arg(Col::TextSecondary));
+    uiLayout->addWidget(reqLabel);
+
+    m_uiRequirementsEdit = new QPlainTextEdit(uiBox);
+    m_uiRequirementsEdit->setPlaceholderText(QStringLiteral(
+        "Describe the UI you want to build, e.g.:\n"
+        "  \"A dark-themed login page with email/password fields, a gradient hero image, "
+        "animated submit button, and a footer with social links.\""));
+    m_uiRequirementsEdit->setFixedHeight(100);
+    m_uiRequirementsEdit->setStyleSheet(QStringLiteral(
+        "QPlainTextEdit { background: %1; color: %2; border: 1px solid %3; border-radius: 8px; "
+        "                  padding: 8px; font-size: 13px; }"
+        "QPlainTextEdit:focus { border-color: %4; }"
+    ).arg(Col::BgCard, Col::TextPrimary, Col::Border, Col::Accent));
+    uiLayout->addWidget(m_uiRequirementsEdit);
+
+    // Progress bar + status label
+    m_uiProgressBar = new QProgressBar(uiBox);
+    m_uiProgressBar->setRange(0, 0);   // indeterminate
+    m_uiProgressBar->setFixedHeight(4);
+    m_uiProgressBar->setTextVisible(false);
+    m_uiProgressBar->hide();
+    m_uiProgressBar->setStyleSheet(QStringLiteral(
+        "QProgressBar { background: %1; border: none; border-radius: 2px; }"
+        "QProgressBar::chunk { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,"
+        "stop:0 %2,stop:1 %3); border-radius: 2px; }"
+    ).arg(Col::BgCard, Col::Accent, Col::AccentCyan));
+    uiLayout->addWidget(m_uiProgressBar);
+
+    m_uiStatusLabel = new QLabel(uiBox);
+    m_uiStatusLabel->setWordWrap(true);
+    m_uiStatusLabel->setStyleSheet(QStringLiteral(
+        "QLabel { color: %1; font-size: 12px; }").arg(Col::TextMuted));
+    m_uiStatusLabel->hide();
+    uiLayout->addWidget(m_uiStatusLabel);
+
+    // Generate button
+    m_uiGenerateButton = makeActionBtn(uiBox,
+        QStringLiteral("Generate && Implement UI"),
+        QString(), QStringLiteral("Analyze the design, generate code, create git branch, and commit locally"));
+    m_uiGenerateButton->setText(QStringLiteral("🚀  Generate && Implement UI"));
+    m_uiGenerateButton->setStyleSheet(QStringLiteral(
+        "QPushButton { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 %1,stop:1 %2); "
+        "              color: white; border: none; font-weight: 700; font-size: 14px; "
+        "              padding: 12px 24px; border-radius: 10px; } "
+        "QPushButton:hover { background: %2; } "
+        "QPushButton:disabled { background: %3; color: %4; }"
+    ).arg(Col::Accent, Col::AccentGlow, Col::BgCard, Col::TextMuted));
+    uiLayout->addWidget(m_uiGenerateButton, 0, Qt::AlignLeft);
+
+    layout->addWidget(uiBox);
+
+    // ── ③ File Organization ─────────────────────────────────
+    auto *organizeBox = new QGroupBox(QStringLiteral("📁  File Organization"), content);
     auto *organizeLayout = new QVBoxLayout(organizeBox);
     organizeLayout->setSpacing(12);
 
@@ -723,76 +912,67 @@ QWidget *MainWindow::createDevHubPage()
         QStringLiteral("Scan a directory for duplicate files (SHA-256) and get folder structure suggestions."),
         organizeBox);
     organizeDesc->setWordWrap(true);
-    organizeDesc->setStyleSheet(QStringLiteral("QLabel { color: %1; font-size: 13px; }").arg(Col::TextSecondary));
+    organizeDesc->setStyleSheet(QStringLiteral(
+        "QLabel { color: %1; font-size: 13px; }").arg(Col::TextSecondary));
     organizeLayout->addWidget(organizeDesc);
 
-    m_organizeButton = new QPushButton(QStringLiteral("  Organize && Find Duplicates"), organizeBox);
-    m_organizeButton->setIcon(createVectorIcon(QStringLiteral("organize"), 20));
-    m_organizeButton->setToolTip(
-        QStringLiteral("Scan the project directory for duplicate files and get a suggested folder structure"));
-    m_organizeButton->setStyleSheet(QStringLiteral(
-        "QPushButton { background: %1; color: white; border: none; font-weight: 600; padding: 10px 20px; } "
-        "QPushButton:hover { background: %2; }"
-    ).arg(Col::Accent, Col::AccentGlow));
+    m_organizeButton = makeActionBtn(organizeBox, QStringLiteral("Organize && Find Duplicates"),
+                                     QStringLiteral("organize"),
+                                     QStringLiteral("Scan project for duplicate files and folder structure suggestions"));
     organizeLayout->addWidget(m_organizeButton, 0, Qt::AlignLeft);
-
     layout->addWidget(organizeBox);
 
-    // Disk Cleanup section
-    auto *cleanupBox = new QGroupBox(QStringLiteral("Disk Cleanup"), page);
+    // ── ④ Disk Cleanup ──────────────────────────────────────
+    auto *cleanupBox = new QGroupBox(QStringLiteral("🧹  Disk Cleanup"), content);
     auto *cleanupLayout = new QVBoxLayout(cleanupBox);
     cleanupLayout->setSpacing(12);
 
     auto *cleanupDesc = new QLabel(
-        QStringLiteral("Monitor disk usage per mount point and get suggestions for safe "
-                       "cleanup actions (package cache, user cache, trash, journal logs, "
-                       "orphan packages)."),
+        QStringLiteral("Monitor disk usage per mount point and get suggestions for safe cleanup "
+                       "actions (package cache, user cache, trash, journal logs, orphan packages)."),
         cleanupBox);
     cleanupDesc->setWordWrap(true);
-    cleanupDesc->setStyleSheet(QStringLiteral("QLabel { color: %1; font-size: 13px; }").arg(Col::TextSecondary));
+    cleanupDesc->setStyleSheet(QStringLiteral(
+        "QLabel { color: %1; font-size: 13px; }").arg(Col::TextSecondary));
     cleanupLayout->addWidget(cleanupDesc);
 
-    m_diskCleanupButton = new QPushButton(QStringLiteral("  Analyze Disk Usage"), cleanupBox);
-    m_diskCleanupButton->setIcon(createVectorIcon(QStringLiteral("cleanup"), 20));
-    m_diskCleanupButton->setToolTip(
-        QStringLiteral("Analyze disk usage and get safe cleanup suggestions"));
-    m_diskCleanupButton->setStyleSheet(QStringLiteral(
-        "QPushButton { background: %1; color: white; border: none; font-weight: 600; padding: 10px 20px; } "
-        "QPushButton:hover { background: %2; }"
-    ).arg(Col::Accent, Col::AccentGlow));
+    m_diskCleanupButton = makeActionBtn(cleanupBox, QStringLiteral("Analyze Disk Usage"),
+                                        QStringLiteral("cleanup"),
+                                        QStringLiteral("Analyze disk usage and get safe cleanup suggestions"));
     cleanupLayout->addWidget(m_diskCleanupButton, 0, Qt::AlignLeft);
-
     layout->addWidget(cleanupBox);
 
-    // Update Checker section
-    auto *updatesBox = new QGroupBox(QStringLiteral("Update Checker"), page);
+    // ── ⑤ Update Checker ────────────────────────────────────
+    auto *updatesBox = new QGroupBox(QStringLiteral("🔄  Update Checker"), content);
     auto *updatesLayout = new QVBoxLayout(updatesBox);
     updatesLayout->setSpacing(12);
 
     auto *updatesDesc = new QLabel(
-        QStringLiteral("Track installed package versions and see which packages have "
-                       "newer versions available (official repositories and AUR)."),
+        QStringLiteral("Track installed package versions and see which packages have newer "
+                       "versions available (official repositories and AUR)."),
         updatesBox);
     updatesDesc->setWordWrap(true);
-    updatesDesc->setStyleSheet(QStringLiteral("QLabel { color: %1; font-size: 13px; }").arg(Col::TextSecondary));
+    updatesDesc->setStyleSheet(QStringLiteral(
+        "QLabel { color: %1; font-size: 13px; }").arg(Col::TextSecondary));
     updatesLayout->addWidget(updatesDesc);
 
-    m_checkUpdatesButton = new QPushButton(QStringLiteral("  Check for Updates"), updatesBox);
-    m_checkUpdatesButton->setIcon(createVectorIcon(QStringLiteral("update"), 20));
-    m_checkUpdatesButton->setToolTip(
-        QStringLiteral("Compare installed package versions with the repositories and "
-                       "suggest update commands"));
-    m_checkUpdatesButton->setStyleSheet(QStringLiteral(
-        "QPushButton { background: %1; color: white; border: none; font-weight: 600; padding: 10px 20px; } "
-        "QPushButton:hover { background: %2; }"
-    ).arg(Col::Accent, Col::AccentGlow));
+    m_checkUpdatesButton = makeActionBtn(updatesBox, QStringLiteral("Check for Updates"),
+                                          QStringLiteral("update"),
+                                          QStringLiteral("Compare installed package versions with repositories"));
     updatesLayout->addWidget(m_checkUpdatesButton, 0, Qt::AlignLeft);
-
     layout->addWidget(updatesBox);
-    layout->addStretch(1);
 
-    return page;
+    layout->addStretch(1);
+    outerLayout->addWidget(scrollArea, 1);
+
+    // ── Connect new UI Developer buttons ────────────────────
+    connect(m_uiDesignPickBtn,  &QPushButton::clicked, this, &MainWindow::onUiDesignImageClicked);
+    connect(m_uiDesignClearBtn, &QPushButton::clicked, this, &MainWindow::onClearUiDesignImage);
+    connect(m_uiGenerateButton, &QPushButton::clicked, this, &MainWindow::onGenerateUiClicked);
+
+    return outer;
 }
+
 
 // ─────────────────────────────────────────────────────────────
 //  Shared Input Card (glassmorphism prompt bar)
@@ -1145,6 +1325,10 @@ MainWindow::MainWindow(QWidget *parent)
     connect(&m_agent, &Agent::startupSuggestionsReady, this, &MainWindow::onStartupSuggestions);
     connect(&m_agent, &Agent::calendarEventsReady, this, &MainWindow::onCalendarEventsReady);
     connect(&m_agent, &Agent::calendarNotificationAlert, this, &MainWindow::onCalendarNotificationAlert);
+
+    // UI Developer connections
+    connect(&m_agent, &Agent::uiDevelopmentProgress, this, &MainWindow::onUiDevelopmentProgress);
+    connect(&m_agent, &Agent::uiDevelopmentFinished, this, &MainWindow::onUiDevelopmentFinished);
 
     // Voice connections
     connect(m_voiceButton, &QPushButton::toggled, this, &MainWindow::onVoiceButtonToggled);
@@ -1718,4 +1902,117 @@ void MainWindow::onOpenCalendarSettings()
 {
     CalendarSettingsDialog dialog(m_agent.calendarManager(), m_agent.notificationManager(), this);
     dialog.exec();
+}
+
+// ─────────────────────────────────────────────────────────────
+//  UI Design-to-Code Developer Hub slots
+// ─────────────────────────────────────────────────────────────
+void MainWindow::onUiDesignImageClicked()
+{
+    const QString file = QFileDialog::getOpenFileName(
+        this,
+        QStringLiteral("Select UI Design / Wireframe"),
+        QDir::homePath(),
+        QStringLiteral("Images (*.png *.jpg *.jpeg *.bmp *.webp);;All Files (*)"));
+    if (file.isEmpty()) {
+        return;
+    }
+
+    QImage image(file);
+    if (image.isNull()) {
+        m_uiStatusLabel->setText(QStringLiteral("⚠ Could not load image: %1").arg(file));
+        m_uiStatusLabel->show();
+        return;
+    }
+
+    m_uiDesignImage = image;
+
+    // Show thumbnail
+    QPixmap thumb = QPixmap::fromImage(
+        image.scaled(116, 76, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    m_uiDesignPreview->setPixmap(thumb);
+    m_uiDesignPreview->setToolTip(file);
+    m_uiDesignClearBtn->setEnabled(true);
+    m_uiStatusLabel->hide();
+}
+
+void MainWindow::onClearUiDesignImage()
+{
+    m_uiDesignImage = QImage();
+    m_uiDesignPreview->clear();
+    m_uiDesignPreview->setText(QStringLiteral("No design image attached"));
+    m_uiDesignClearBtn->setEnabled(false);
+    m_uiStatusLabel->hide();
+}
+
+void MainWindow::onGenerateUiClicked()
+{
+    const QString requirements = m_uiRequirementsEdit->toPlainText().trimmed();
+    if (requirements.isEmpty() && m_uiDesignImage.isNull()) {
+        m_uiStatusLabel->setText(
+            QStringLiteral("⚠ Please attach a design image or enter requirements before generating."));
+        m_uiStatusLabel->show();
+        return;
+    }
+
+    // Resolve framework selection
+    static const QList<UiDeveloper::Framework> kFwMap = {
+        UiDeveloper::Framework::AutoDetect,
+        UiDeveloper::Framework::HtmlCssJs,
+        UiDeveloper::Framework::React,
+        UiDeveloper::Framework::Vue,
+        UiDeveloper::Framework::QtCpp,
+        UiDeveloper::Framework::Flutter,
+        UiDeveloper::Framework::Python,
+    };
+    const int idx = qBound(0, m_uiFrameworkCombo->currentIndex(),
+                           static_cast<int>(kFwMap.size()) - 1);
+    const UiDeveloper::Framework fw = kFwMap[idx];
+
+    const QString branch = m_uiBranchEdit->text().trimmed();
+
+    // Disable UI while generating
+    m_uiGenerateButton->setEnabled(false);
+    m_uiDesignPickBtn->setEnabled(false);
+    m_uiProgressBar->show();
+    m_uiStatusLabel->setText(QStringLiteral("⏳ Initiating UI generation..."));
+    m_uiStatusLabel->show();
+
+    m_agent.developUi(m_uiDesignImage, requirements, branch, fw);
+}
+
+void MainWindow::onUiDevelopmentProgress(const QString &message)
+{
+    m_uiStatusLabel->setText(QStringLiteral("⏳ %1").arg(message));
+    m_uiStatusLabel->show();
+
+    // Also echo to chat
+    navigateTo(1);
+    appendMessage(QStringLiteral("TitanAI"), message, Col::AccentGlow);
+}
+
+void MainWindow::onUiDevelopmentFinished(bool success, const QString &summary, const QString &branchName)
+{
+    // Re-enable UI
+    m_uiGenerateButton->setEnabled(true);
+    m_uiDesignPickBtn->setEnabled(true);
+    m_uiProgressBar->hide();
+
+    if (success) {
+        m_uiStatusLabel->setText(
+            QStringLiteral("✅ Done! Branch: %1").arg(branchName));
+        m_uiStatusLabel->setStyleSheet(
+            QStringLiteral("QLabel { color: %1; font-size: 12px; }").arg(Col::Success));
+    } else {
+        m_uiStatusLabel->setText(QStringLiteral("❌ Failed: %1").arg(summary));
+        m_uiStatusLabel->setStyleSheet(
+            QStringLiteral("QLabel { color: %1; font-size: 12px; }").arg(Col::Danger));
+    }
+    m_uiStatusLabel->show();
+
+    // Show full summary in chat
+    navigateTo(1);
+    appendMessage(QStringLiteral("TitanAI"), summary,
+                  success ? QLatin1String(Col::AccentGlow) : QLatin1String(Col::Danger));
+    setInputEnabled(true);
 }
