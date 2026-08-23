@@ -38,6 +38,7 @@ private slots:
     void onBuildAndFixClicked();
     void onOrganizeClicked();
     void onDiskCleanupClicked();
+    void onCheckUpdatesClicked();
 
     void onVoicePartial(const QString &text);
     void onVoiceFinal(const QString &text);
@@ -128,6 +129,7 @@ private:
     QPushButton *m_buildFixButton{nullptr};
     QPushButton *m_organizeButton{nullptr};
     QPushButton *m_diskCleanupButton{nullptr};
+    QPushButton *m_checkUpdatesButton{nullptr};
 
     // --- Notification banner ---
     QLabel *m_notificationBanner{nullptr};
