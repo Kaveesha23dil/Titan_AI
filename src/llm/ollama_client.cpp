@@ -93,9 +93,21 @@ void OllamaClient::sendChatMessage(const QJsonObject &userMessageObj)
     QNetworkRequest request(m_endpointUrl);
     request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
 
+    QJsonArray messagesWithSystem;
+    QJsonObject systemMsg;
+    systemMsg[QStringLiteral("role")] = QStringLiteral("system");
+    systemMsg[QStringLiteral("content")] = QStringLiteral(
+        "You are TitanAI, a fast, knowledgeable local AI coding and system assistant for Arch Linux. "
+        "Provide expert solutions for programming, debugging, software architecture, and system administration. "
+        "Use clean markdown formatting, concise explanations, and high-quality code.");
+    messagesWithSystem.append(systemMsg);
+    for (const QJsonValue &val : m_history) {
+        messagesWithSystem.append(val);
+    }
+
     QJsonObject payloadObj;
     payloadObj[QStringLiteral("model")] = m_model;
-    payloadObj[QStringLiteral("messages")] = m_history;
+    payloadObj[QStringLiteral("messages")] = messagesWithSystem;
     payloadObj[QStringLiteral("stream")] = true;
     payloadObj[QStringLiteral("keep_alive")] = -1;
 

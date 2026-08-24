@@ -219,21 +219,34 @@ bool Agent::handleAutoFixToggleQuery(const QString &message)
 
 bool Agent::handleCodeFixRequestQuery(const QString &message)
 {
-    QString lower = message.toLower();
+    QString lower = message.toLower().simplified();
 
-    bool explicitFix = false;
-    if (!isInformationalFixQuery(lower)) {
-        explicitFix = (lower.contains(QStringLiteral("fix")) ||
-                       lower.contains(QStringLiteral("repair"))) &&
-                      (lower.contains(QStringLiteral("error")) ||
-                       lower.contains(QStringLiteral("build")) ||
-                       lower.contains(QStringLiteral("compile")) ||
-                       lower.contains(QStringLiteral("code")));
+    static const QStringList kExplicitBuildFixPhrases = {
+        QStringLiteral("fix my build"),
+        QStringLiteral("fix build errors"),
+        QStringLiteral("fix build error"),
+        QStringLiteral("fix the build"),
+        QStringLiteral("fix compiler errors"),
+        QStringLiteral("fix compilation errors"),
+        QStringLiteral("run build and fix"),
+        QStringLiteral("auto fix build"),
+        QStringLiteral("autofix build"),
+        QStringLiteral("fix my project"),
+        QStringLiteral("fix project errors"),
+    };
+
+    bool explicitBuildFix = false;
+    for (const QString &phrase : kExplicitBuildFixPhrases) {
+        if (lower.contains(phrase)) {
+            explicitBuildFix = true;
+            break;
+        }
     }
 
-    bool hasErrors = looksLikeErrorOutput(message);
+    const QList<CodeFixer::BuildError> parsedErrors = CodeFixer::parseErrors(message);
+    const bool hasParsedErrors = !parsedErrors.isEmpty();
 
-    if (!explicitFix && !hasErrors) {
+    if (!explicitBuildFix && !hasParsedErrors) {
         return false;
     }
 
@@ -243,15 +256,22 @@ bool Agent::handleCodeFixRequestQuery(const QString &message)
     }
 
     if (!m_autoFixEnabled) {
-        if (explicitFix) {
+        if (hasParsedErrors) {
+            emit responseReceived(
+                QStringLiteral("Detected build error output, but auto-fix is disabled. "
+                               "Enable it by saying 'enable auto fix' or with the checkbox in the Developer Hub."));
+            return true;
+        }
+        if (explicitBuildFix) {
             emit responseReceived(
                 QStringLiteral("Auto-fix code errors is disabled. Enable it by saying "
-                               "'enable auto fix' or with the checkbox in the window, then try again."));
+                               "'enable auto fix' or with the checkbox in the Developer Hub, then try again."));
+            return true;
         }
-        return explicitFix;
+        return false;
     }
 
-    if (hasErrors) {
+    if (hasParsedErrors) {
         startPasteFix(message);
     } else {
         startBuildFix();
@@ -325,13 +345,17 @@ void Agent::requestFix(const QList<CodeFixer::BuildError> &errors)
 
 void Agent::onCompletionReceived(const QString &response)
 {
-    applyFixes(response);
+    if (m_codeFixInProgress) {
+        applyFixes(response);
+    }
 }
 
 void Agent::onCompletionError(const QString &error)
 {
-    m_codeFixInProgress = false;
-    emit codeFixFinished(QStringLiteral("Model request failed. %1").arg(error), false);
+    if (m_codeFixInProgress) {
+        m_codeFixInProgress = false;
+        emit codeFixFinished(QStringLiteral("Model request failed. %1").arg(error), false);
+    }
 }
 
 void Agent::applyFixes(const QString &llmOutput)

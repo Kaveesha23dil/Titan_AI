@@ -115,49 +115,74 @@ QString UiDeveloper::buildUiGenerationPrompt(const QString &requirements,
 QList<UiDeveloper::GeneratedFile> UiDeveloper::parseGeneratedFiles(const QString &llmOutput)
 {
     QList<GeneratedFile> files;
+    QSet<QString> seenPaths;
 
-    // Primary: FILE: ... ENDFILE blocks
-    static const QRegularExpression fileRe(
-        QStringLiteral("FILE:\\s*([^\\n]+)\\n([\\s\\S]*?)(?=FILE:|ENDFILE|$)"),
-        QRegularExpression::MultilineOption);
+    auto addFile = [&](const QString &path, const QString &content) {
+        QString cleanPath = path.trimmed();
+        // Remove surrounding quotes, markdown backticks or comment characters if any
+        if ((cleanPath.startsWith(QLatin1Char('"')) && cleanPath.endsWith(QLatin1Char('"'))) ||
+            (cleanPath.startsWith(QLatin1Char('`')) && cleanPath.endsWith(QLatin1Char('`')))) {
+            cleanPath = cleanPath.mid(1, cleanPath.length() - 2).trimmed();
+        }
+        while (cleanPath.startsWith(QStringLiteral("//")) || cleanPath.startsWith(QStringLiteral("#")) ||
+               cleanPath.startsWith(QStringLiteral("/*"))) {
+            if (cleanPath.startsWith(QStringLiteral("//")) || cleanPath.startsWith(QStringLiteral("/*"))) {
+                cleanPath = cleanPath.mid(2).trimmed();
+            } else if (cleanPath.startsWith(QStringLiteral("#"))) {
+                cleanPath = cleanPath.mid(1).trimmed();
+            }
+        }
+        if (cleanPath.endsWith(QStringLiteral("*/"))) {
+            cleanPath = cleanPath.left(cleanPath.length() - 2).trimmed();
+        }
 
-    // Also handle ENDFILE-delimited variant
+        QString cleanContent = content.trimmed();
+        if (!cleanPath.isEmpty() && !cleanContent.isEmpty() && !seenPaths.contains(cleanPath)) {
+            seenPaths.insert(cleanPath);
+            files.append(GeneratedFile{cleanPath, cleanContent});
+        }
+    };
+
+    // 1. ENDFILE-delimited variant
     static const QRegularExpression endfileRe(
-        QStringLiteral("FILE:\\s*([^\\n]+)\\n([\\s\\S]*?)ENDFILE"),
+        QStringLiteral("(?:===+)?\\s*FILE:\\s*([^\\n]+)\\n([\\s\\S]*?)(?:ENDFILE|===+)"),
         QRegularExpression::MultilineOption);
 
-    // Try ENDFILE variant first (most reliable)
-    auto it = endfileRe.globalMatch(llmOutput);
-    while (it.hasNext()) {
-        auto m = it.next();
-        GeneratedFile gf;
-        gf.relativePath = m.captured(1).trimmed();
-        gf.content       = m.captured(2);
-        // Strip leading/trailing blank lines
-        gf.content = gf.content.trimmed();
-        if (!gf.relativePath.isEmpty() && !gf.content.isEmpty()) {
-            files << gf;
+    auto endIt = endfileRe.globalMatch(llmOutput);
+    while (endIt.hasNext()) {
+        auto m = endIt.next();
+        addFile(m.captured(1), m.captured(2));
+    }
+
+    // 2. Sequential FILE: markers
+    if (files.isEmpty()) {
+        static const QRegularExpression fileRe(
+            QStringLiteral("(?:^|\\n)(?:===+)?\\s*FILE:\\s*([^\\n]+)\\n([\\s\\S]*?)(?=(?:\\n(?:===+)?\\s*FILE:)|$)"),
+            QRegularExpression::MultilineOption);
+        auto fIt = fileRe.globalMatch(llmOutput);
+        while (fIt.hasNext()) {
+            auto m = fIt.next();
+            addFile(m.captured(1), m.captured(2));
         }
     }
 
-    // Fallback: markdown code blocks with filename comment
+    // 3. Fallback: markdown code blocks with filename comment or tag
     if (files.isEmpty()) {
         static const QRegularExpression mdRe(
-            QStringLiteral("```(?:\\w+)?\\s*\\n(?://\\s*([^\\n]+)\\n)?([\\s\\S]*?)```"),
+            QStringLiteral("```(?:[\\w+-]+)?(?:\\s*\\n|\\s+([^\\n]+)\\n)(?:(?:\\/\\/|#|<!--)\\s*([^\\n]+?)(?:\\s*-->)?\\n)?([\\s\\S]*?)```"),
             QRegularExpression::MultilineOption);
         auto mdIt = mdRe.globalMatch(llmOutput);
         int idx = 0;
         while (mdIt.hasNext()) {
             auto m = mdIt.next();
-            GeneratedFile gf;
-            gf.relativePath = m.captured(1).trimmed();
-            if (gf.relativePath.isEmpty()) {
-                gf.relativePath = QStringLiteral("ui_output_%1.txt").arg(++idx);
+            QString path = m.captured(1).trimmed();
+            if (path.isEmpty()) {
+                path = m.captured(2).trimmed();
             }
-            gf.content = m.captured(2).trimmed();
-            if (!gf.content.isEmpty()) {
-                files << gf;
+            if (path.isEmpty()) {
+                path = QStringLiteral("ui_output_%1.txt").arg(++idx);
             }
+            addFile(path, m.captured(3));
         }
     }
 
