@@ -1553,6 +1553,14 @@ void MainWindow::onBuildAndFixClicked()
                       Col::Danger);
         return;
     }
+    if (m_projectEdit) {
+        m_projectDirectory = m_projectEdit->text().trimmed();
+        m_agent.setProjectDirectory(m_projectDirectory);
+    }
+    if (m_buildEdit) {
+        m_buildCommand = m_buildEdit->text().trimmed();
+        m_agent.setBuildCommand(m_buildCommand);
+    }
     setInputEnabled(false);
     m_agent.runBuildAndFix();
 }
@@ -1970,6 +1978,11 @@ void MainWindow::onGenerateUiClicked()
     const UiDeveloper::Framework fw = kFwMap[idx];
 
     const QString branch = m_uiBranchEdit->text().trimmed();
+
+    if (m_projectEdit) {
+        m_projectDirectory = m_projectEdit->text().trimmed();
+        m_agent.setProjectDirectory(m_projectDirectory);
+    }
 
     // Disable UI while generating
     m_uiGenerateButton->setEnabled(false);

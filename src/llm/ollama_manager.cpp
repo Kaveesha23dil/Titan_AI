@@ -68,10 +68,15 @@ void OllamaManager::checkServerAndModel()
 
         QJsonArray models = doc.object().value(QStringLiteral("models")).toArray();
         for (const QJsonValue &value : models) {
-            if (value.toObject().value(QStringLiteral("name")).toString() == m_model) {
+            const QString name = value.toObject().value(QStringLiteral("name")).toString();
+            const QString modelField = value.toObject().value(QStringLiteral("model")).toString();
+            if (name == m_model || modelField == m_model ||
+                name.startsWith(m_model + QStringLiteral(":")) ||
+                (m_model.contains(QLatin1Char(':')) && name == m_model.section(QLatin1Char(':'), 0, 0)) ||
+                (name.contains(QLatin1Char(':')) && name.section(QLatin1Char(':'), 0, 0) == m_model)) {
                 m_pollTimer.stop();
-                emit statusChanged(Status::Ready, QStringLiteral("Model ready: %1").arg(m_model));
-                emit modelReady(m_model);
+                emit statusChanged(Status::Ready, QStringLiteral("Model ready: %1").arg(name));
+                emit modelReady(name);
                 return;
             }
         }
