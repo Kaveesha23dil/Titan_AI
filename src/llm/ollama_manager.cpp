@@ -38,6 +38,17 @@ void OllamaManager::ensureModelReady(const QString &model)
     checkServerAndModel();
 }
 
+bool OllamaManager::isVisionCapable(const QString &modelName)
+{
+    const QString lower = modelName.toLower();
+    return lower.contains(QStringLiteral("gemma3")) ||
+           lower.contains(QStringLiteral("llava")) ||
+           lower.contains(QStringLiteral("vision")) ||
+           lower.contains(QStringLiteral("minicpm-v")) ||
+           lower.contains(QStringLiteral("vl")) ||
+           lower.contains(QStringLiteral("bakllava"));
+}
+
 void OllamaManager::checkServerAndModel()
 {
     if (m_attempts++ >= kMaxAttempts) {
@@ -67,6 +78,19 @@ void OllamaManager::checkServerAndModel()
         }
 
         QJsonArray models = doc.object().value(QStringLiteral("models")).toArray();
+        QString selectedModel;
+        m_visionModel.clear();
+
+        // Detect any installed vision-capable models (e.g. gemma3:4b, llava)
+        for (const QJsonValue &value : models) {
+            const QString name = value.toObject().value(QStringLiteral("name")).toString();
+            if (isVisionCapable(name)) {
+                m_visionModel = name;
+                break;
+            }
+        }
+
+        // 1. Check for requested model (exact or prefix match)
         for (const QJsonValue &value : models) {
             const QString name = value.toObject().value(QStringLiteral("name")).toString();
             const QString modelField = value.toObject().value(QStringLiteral("model")).toString();
@@ -74,15 +98,35 @@ void OllamaManager::checkServerAndModel()
                 name.startsWith(m_model + QStringLiteral(":")) ||
                 (m_model.contains(QLatin1Char(':')) && name == m_model.section(QLatin1Char(':'), 0, 0)) ||
                 (name.contains(QLatin1Char(':')) && name.section(QLatin1Char(':'), 0, 0) == m_model)) {
-                m_pollTimer.stop();
-                emit statusChanged(Status::Ready, QStringLiteral("Model ready: %1").arg(name));
-                emit modelReady(name);
-                return;
+                selectedModel = name;
+                break;
             }
         }
 
+        // 2. Fallback to any installed coder model, or any available model
+        if (selectedModel.isEmpty() && !models.isEmpty()) {
+            for (const QJsonValue &value : models) {
+                const QString name = value.toObject().value(QStringLiteral("name")).toString();
+                if (name.contains(QStringLiteral("coder"), Qt::CaseInsensitive) ||
+                    name.contains(QStringLiteral("qwen"), Qt::CaseInsensitive)) {
+                    selectedModel = name;
+                    break;
+                }
+            }
+            if (selectedModel.isEmpty()) {
+                selectedModel = models.first().toObject().value(QStringLiteral("name")).toString();
+            }
+        }
+
+        if (!selectedModel.isEmpty()) {
+            m_pollTimer.stop();
+            emit statusChanged(Status::Ready, QStringLiteral("Model ready: %1").arg(selectedModel));
+            emit modelReady(selectedModel);
+            return;
+        }
+
         m_pollTimer.stop();
-        failWithError(QStringLiteral("Model '%1' is not installed. Install it with: ollama pull %1")
+        failWithError(QStringLiteral("No models installed in Ollama. Install one with: ollama pull %1")
                           .arg(m_model));
     });
 }

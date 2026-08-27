@@ -24,7 +24,7 @@ class Agent : public QObject {
     Q_OBJECT
 
 public:
-    static constexpr const char *kDefaultModel = "gemma3:4b";
+    static constexpr const char *kDefaultModel = "qwen2.5-coder:1.5b";
 
     explicit Agent(QObject *parent = nullptr);
     ~Agent() override = default;

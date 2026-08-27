@@ -112,7 +112,7 @@ void Agent::sendImageMessage(const QImage &image, const QString &text)
     }
 
     QImage scaled = image;
-    constexpr int kMaxDim = 1024;
+    constexpr int kMaxDim = 512;
     const int maxSide = qMax(scaled.width(), scaled.height());
     if (maxSide > kMaxDim) {
         scaled = scaled.scaled(
@@ -124,7 +124,18 @@ void Agent::sendImageMessage(const QImage &image, const QString &text)
     buffer.open(QIODevice::WriteOnly);
     scaled.save(&buffer, "JPEG", 85);
 
-    m_ollamaClient.sendImagePrompt(text, {bytes.toBase64()});
+    QString visionModel = m_ollamaManager.visionModel();
+    if (visionModel.isEmpty() && OllamaManager::isVisionCapable(m_ollamaClient.model())) {
+        visionModel = m_ollamaClient.model();
+    }
+
+    if (!visionModel.isEmpty()) {
+        m_ollamaClient.sendImagePrompt(text, {bytes.toBase64()}, visionModel);
+    } else {
+        emit toolOutputReceived(QStringLiteral("Notice: Model '%1' is text-only. Processing text prompt without image.")
+            .arg(m_ollamaClient.model()));
+        m_ollamaClient.sendPrompt(text);
+    }
 }
 
 void Agent::setAutoFixEnabled(bool enabled)
@@ -1260,7 +1271,7 @@ void Agent::developUi(const QImage &designImage,
     if (!designImage.isNull()) {
         // Vision-based: encode image and do single-shot structured completion
         QImage scaled = designImage;
-        constexpr int kMaxDim = 1024;
+        constexpr int kMaxDim = 512;
         if (qMax(scaled.width(), scaled.height()) > kMaxDim) {
             scaled = scaled.scaled(kMaxDim, kMaxDim, Qt::KeepAspectRatio, Qt::SmoothTransformation);
         }
@@ -1269,7 +1280,12 @@ void Agent::developUi(const QImage &designImage,
         buffer.open(QIODevice::WriteOnly);
         scaled.save(&buffer, "JPEG", 85);
 
-        emit uiDevelopmentProgress(QStringLiteral("Sending image + requirements to AI model..."));
+        emit uiDevelopmentProgress(QStringLiteral("Preparing requirements and design image..."));
+
+        QString visionModel = m_ollamaManager.visionModel();
+        if (visionModel.isEmpty() && OllamaManager::isVisionCapable(m_ollamaClient.model())) {
+            visionModel = m_ollamaClient.model();
+        }
 
         // We use requestImageCompletion for a non-streaming structured response
         // Wire a one-shot connection to handle the result
@@ -1291,7 +1307,13 @@ void Agent::developUi(const QImage &designImage,
                     QStringLiteral("AI model error: %1").arg(error), QString());
             });
 
-        m_ollamaClient.requestImageCompletion(prompt, {bytes.toBase64()});
+        if (!visionModel.isEmpty()) {
+            emit uiDevelopmentProgress(QStringLiteral("Sending design image to vision model (%1)...").arg(visionModel));
+            m_ollamaClient.requestImageCompletion(prompt, {bytes.toBase64()}, visionModel);
+        } else {
+            emit uiDevelopmentProgress(QStringLiteral("Active model is text-only; generating UI from text requirements..."));
+            m_ollamaClient.requestCompletion(prompt);
+        }
     } else {
         // Text-only: use non-streaming completion
         const QString capturedBranch = branch;

@@ -25,6 +25,8 @@ public:
     ~OllamaManager() override;
 
     void ensureModelReady(const QString &model);
+    [[nodiscard]] QString visionModel() const { return m_visionModel; }
+    static bool isVisionCapable(const QString &modelName);
 
 signals:
     void statusChanged(OllamaManager::Status status, const QString &message);
@@ -43,6 +45,7 @@ private:
     QTimer m_pollTimer;
     QUrl m_tagsUrl{QStringLiteral("http://127.0.0.1:11434/api/tags")};
     QString m_model;
+    QString m_visionModel;
     int m_attempts{0};
     bool m_startedByUs{false};
 

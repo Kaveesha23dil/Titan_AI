@@ -17,9 +17,9 @@ public:
     ~OllamaClient() override = default;
 
     void sendPrompt(const QString &prompt);
-    void sendImagePrompt(const QString &prompt, const QList<QByteArray> &encodedImages);
+    void sendImagePrompt(const QString &prompt, const QList<QByteArray> &encodedImages, const QString &modelOverride = QString());
     void requestCompletion(const QString &prompt);
-    void requestImageCompletion(const QString &prompt, const QList<QByteArray> &encodedImages);
+    void requestImageCompletion(const QString &prompt, const QList<QByteArray> &encodedImages, const QString &modelOverride = QString());
     void setModel(const QString &model);
     [[nodiscard]] const QString& model() const;
     void warmUp();
