@@ -5,6 +5,18 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 
+namespace {
+
+QJsonObject defaultOllamaOptions()
+{
+    QJsonObject opts;
+    opts[QStringLiteral("num_ctx")] = 2048;    // Bound memory footprint to prevent swapping
+    opts[QStringLiteral("num_thread")] = 6;    // Utilize 6 CPU threads for fast token generation
+    return opts;
+}
+
+} // namespace
+
 OllamaClient::OllamaClient(QObject *parent)
     : QObject(parent)
 {
@@ -42,6 +54,7 @@ void OllamaClient::warmUp()
     payloadObj[QStringLiteral("prompt")] = QString();
     payloadObj[QStringLiteral("stream")] = false;
     payloadObj[QStringLiteral("keep_alive")] = -1;
+    payloadObj[QStringLiteral("options")] = defaultOllamaOptions();
 
     QJsonDocument payloadDoc(payloadObj);
     QByteArray postData = payloadDoc.toJson(QJsonDocument::Compact);
@@ -66,10 +79,10 @@ void OllamaClient::sendPrompt(const QString &prompt)
     sendChatMessage(userMessageObj);
 }
 
-void OllamaClient::sendImagePrompt(const QString &prompt, const QList<QByteArray> &encodedImages)
+void OllamaClient::sendImagePrompt(const QString &prompt, const QList<QByteArray> &encodedImages, const QString &modelOverride)
 {
     QString trimmedPrompt = prompt.trimmed();
-    if (trimmedPrompt.isEmpty() || encodedImages.isEmpty()) {
+    if (trimmedPrompt.isEmpty()) {
         return;
     }
 
@@ -77,13 +90,24 @@ void OllamaClient::sendImagePrompt(const QString &prompt, const QList<QByteArray
     userMessageObj[QStringLiteral("role")] = QStringLiteral("user");
     userMessageObj[QStringLiteral("content")] = trimmedPrompt;
 
-    QJsonArray imagesArray;
-    for (const QByteArray &image : encodedImages) {
-        imagesArray.append(QString::fromLatin1(image));
+    if (!encodedImages.isEmpty()) {
+        QJsonArray imagesArray;
+        for (const QByteArray &image : encodedImages) {
+            imagesArray.append(QString::fromLatin1(image));
+        }
+        userMessageObj[QStringLiteral("images")] = imagesArray;
     }
-    userMessageObj[QStringLiteral("images")] = imagesArray;
+
+    QString previousModel = m_model;
+    if (!modelOverride.trimmed().isEmpty()) {
+        m_model = modelOverride.trimmed();
+    }
 
     sendChatMessage(userMessageObj);
+
+    if (!modelOverride.trimmed().isEmpty()) {
+        m_model = previousModel;
+    }
 }
 
 void OllamaClient::sendChatMessage(const QJsonObject &userMessageObj)
@@ -110,6 +134,7 @@ void OllamaClient::sendChatMessage(const QJsonObject &userMessageObj)
     payloadObj[QStringLiteral("messages")] = messagesWithSystem;
     payloadObj[QStringLiteral("stream")] = true;
     payloadObj[QStringLiteral("keep_alive")] = -1;
+    payloadObj[QStringLiteral("options")] = defaultOllamaOptions();
 
     QJsonDocument payloadDoc(payloadObj);
     QByteArray postData = payloadDoc.toJson(QJsonDocument::Compact);
@@ -153,6 +178,7 @@ void OllamaClient::requestCompletion(const QString &prompt)
     payloadObj[QStringLiteral("messages")] = messages;
     payloadObj[QStringLiteral("stream")] = false;
     payloadObj[QStringLiteral("keep_alive")] = -1;
+    payloadObj[QStringLiteral("options")] = defaultOllamaOptions();
 
     QNetworkReply *reply = m_networkManager.post(
         request, QJsonDocument(payloadObj).toJson(QJsonDocument::Compact));
@@ -164,33 +190,40 @@ void OllamaClient::requestCompletion(const QString &prompt)
 }
 
 void OllamaClient::requestImageCompletion(const QString &prompt,
-                                          const QList<QByteArray> &encodedImages)
+                                          const QList<QByteArray> &encodedImages,
+                                          const QString &modelOverride)
 {
     QString trimmedPrompt = prompt.trimmed();
-    if (trimmedPrompt.isEmpty() || encodedImages.isEmpty()) {
+    if (trimmedPrompt.isEmpty()) {
         return;
     }
+
+    const QString targetModel = modelOverride.trimmed().isEmpty() ? m_model : modelOverride.trimmed();
 
     QNetworkRequest request(m_endpointUrl);
     request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
 
-    QJsonArray imagesArray;
-    for (const QByteArray &img : encodedImages) {
-        imagesArray.append(QString::fromLatin1(img));
-    }
-
-    QJsonArray messages;
     QJsonObject userMessageObj;
     userMessageObj[QStringLiteral("role")]    = QStringLiteral("user");
     userMessageObj[QStringLiteral("content")] = trimmedPrompt;
-    userMessageObj[QStringLiteral("images")]  = imagesArray;
+
+    if (!encodedImages.isEmpty()) {
+        QJsonArray imagesArray;
+        for (const QByteArray &img : encodedImages) {
+            imagesArray.append(QString::fromLatin1(img));
+        }
+        userMessageObj[QStringLiteral("images")]  = imagesArray;
+    }
+
+    QJsonArray messages;
     messages.append(userMessageObj);
 
     QJsonObject payloadObj;
-    payloadObj[QStringLiteral("model")]      = m_model;
+    payloadObj[QStringLiteral("model")]      = targetModel;
     payloadObj[QStringLiteral("messages")]   = messages;
     payloadObj[QStringLiteral("stream")]     = false;
     payloadObj[QStringLiteral("keep_alive")] = -1;
+    payloadObj[QStringLiteral("options")]    = defaultOllamaOptions();
 
     QNetworkReply *reply = m_networkManager.post(
         request, QJsonDocument(payloadObj).toJson(QJsonDocument::Compact));
@@ -204,29 +237,63 @@ void OllamaClient::requestImageCompletion(const QString &prompt,
 void OllamaClient::handleCompletionReply(QNetworkReply *reply)
 {
     int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    QByteArray responseData = reply->readAll();
+
     if (reply->error() != QNetworkReply::NoError || statusCode >= 400) {
         QString errorDetails;
         if (statusCode > 0) {
             errorDetails += QStringLiteral("HTTP Status %1. ").arg(statusCode);
         }
-        if (reply->error() != QNetworkReply::NoError) {
-            errorDetails += QStringLiteral("Network Error (%1): %2")
-                                .arg(reply->error())
-                                .arg(reply->errorString());
+
+        // Try extracting structured error from Ollama JSON response
+        QJsonParseError parseError;
+        QJsonDocument errDoc = QJsonDocument::fromJson(responseData, &parseError);
+        if (parseError.error == QJsonParseError::NoError && errDoc.isObject()) {
+            QJsonObject rootObj = errDoc.object();
+            if (rootObj.contains(QStringLiteral("error"))) {
+                QJsonValue errVal = rootObj.value(QStringLiteral("error"));
+                if (errVal.isObject()) {
+                    errorDetails += errVal.toObject().value(QStringLiteral("message")).toString();
+                } else if (errVal.isString()) {
+                    QString errStr = errVal.toString();
+                    QJsonDocument nestedDoc = QJsonDocument::fromJson(errStr.toUtf8());
+                    if (nestedDoc.isObject() && nestedDoc.object().contains(QStringLiteral("error"))) {
+                        errorDetails += nestedDoc.object().value(QStringLiteral("error")).toObject().value(QStringLiteral("message")).toString();
+                    } else {
+                        errorDetails += errStr;
+                    }
+                }
+            }
         }
+
+        if (errorDetails.isEmpty() || errorDetails == QStringLiteral("HTTP Status %1. ").arg(statusCode)) {
+            if (reply->error() != QNetworkReply::NoError) {
+                errorDetails += QStringLiteral("Network Error (%1): %2")
+                                    .arg(reply->error())
+                                    .arg(reply->errorString());
+            }
+        }
+
         emit completionError(errorDetails);
         return;
     }
 
     QJsonParseError parseError;
-    QJsonDocument doc = QJsonDocument::fromJson(reply->readAll(), &parseError);
+    QJsonDocument doc = QJsonDocument::fromJson(responseData, &parseError);
     if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
-        emit completionError(QStringLiteral("Invalid response from Ollama."));
+        emit completionError(QStringLiteral("Invalid response from Ollama: %1").arg(parseError.errorString()));
         return;
     }
 
-    QString content = doc.object().value(QStringLiteral("message")).toObject()
-                          .value(QStringLiteral("content")).toString();
+    QJsonObject rootObj = doc.object();
+    QString content;
+    if (rootObj.contains(QStringLiteral("message"))) {
+        content = rootObj.value(QStringLiteral("message")).toObject()
+                         .value(QStringLiteral("content")).toString();
+    } else if (rootObj.contains(QStringLiteral("response"))) {
+        content = rootObj.value(QStringLiteral("response")).toString();
+    }
+
     if (content.trimmed().isEmpty()) {
         emit completionError(QStringLiteral("The model returned an empty response."));
         return;

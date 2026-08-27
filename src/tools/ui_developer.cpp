@@ -166,24 +166,53 @@ QList<UiDeveloper::GeneratedFile> UiDeveloper::parseGeneratedFiles(const QString
         }
     }
 
-    // 3. Fallback: markdown code blocks with filename comment or tag
+    // 3. Fallback: markdown code blocks with filename comment, tag, or language
     if (files.isEmpty()) {
         static const QRegularExpression mdRe(
-            QStringLiteral("```(?:[\\w+-]+)?(?:\\s*\\n|\\s+([^\\n]+)\\n)(?:(?:\\/\\/|#|<!--)\\s*([^\\n]+?)(?:\\s*-->)?\\n)?([\\s\\S]*?)```"),
+            QStringLiteral("```([\\w+-]+)?(?:\\s+([^\\n]+))?\\n([\\s\\S]*?)```"),
             QRegularExpression::MultilineOption);
         auto mdIt = mdRe.globalMatch(llmOutput);
         int idx = 0;
         while (mdIt.hasNext()) {
             auto m = mdIt.next();
-            QString path = m.captured(1).trimmed();
-            if (path.isEmpty()) {
-                path = m.captured(2).trimmed();
+            QString lang = m.captured(1).trimmed().toLower();
+            QString path = m.captured(2).trimmed();
+            QString body = m.captured(3).trimmed();
+
+            // Check first line of body for // filename.ext, # filename.ext, or <!-- filename.ext -->
+            if (path.isEmpty() && !body.isEmpty()) {
+                QString firstLine = body.section(QLatin1Char('\n'), 0, 0).trimmed();
+                static const QRegularExpression headerFileRe(
+                    QStringLiteral("^(?:\\/\\/|#|<!--|\\/\\*)\\s*(?:File:\\s*|filename:\\s*)?([\\w./-]+\\.[a-zA-Z0-9]+)(?:\\s*-->|\\*\\/)?$"),
+                    QRegularExpression::CaseInsensitiveOption);
+                QRegularExpressionMatch hMatch = headerFileRe.match(firstLine);
+                if (hMatch.hasMatch()) {
+                    path = hMatch.captured(1).trimmed();
+                    body = body.section(QLatin1Char('\n'), 1).trimmed();
+                }
             }
+
             if (path.isEmpty()) {
-                path = QStringLiteral("ui_output_%1.txt").arg(++idx);
+                QString ext = QStringLiteral("txt");
+                if (lang == QStringLiteral("html")) ext = QStringLiteral("html");
+                else if (lang == QStringLiteral("css")) ext = QStringLiteral("css");
+                else if (lang == QStringLiteral("js") || lang == QStringLiteral("javascript")) ext = QStringLiteral("js");
+                else if (lang == QStringLiteral("jsx") || lang == QStringLiteral("tsx")) ext = QStringLiteral("jsx");
+                else if (lang == QStringLiteral("vue")) ext = QStringLiteral("vue");
+                else if (lang == QStringLiteral("cpp") || lang == QStringLiteral("c++")) ext = QStringLiteral("cpp");
+                else if (lang == QStringLiteral("hpp") || lang == QStringLiteral("h")) ext = QStringLiteral("hpp");
+                else if (lang == QStringLiteral("qml")) ext = QStringLiteral("qml");
+                else if (lang == QStringLiteral("py") || lang == QStringLiteral("python")) ext = QStringLiteral("py");
+                else if (lang == QStringLiteral("dart")) ext = QStringLiteral("dart");
+                path = QStringLiteral("ui_component_%1.%2").arg(++idx).arg(ext);
             }
-            addFile(path, m.captured(3));
+            addFile(path, body);
         }
+    }
+
+    // 4. Fallback: non-empty LLM output without code fences
+    if (files.isEmpty() && !llmOutput.trimmed().isEmpty()) {
+        addFile(QStringLiteral("generated_ui_code.txt"), llmOutput.trimmed());
     }
 
     return files;
@@ -257,35 +286,43 @@ void UiDeveloper::implementFromLlmOutput(const QString &llmOutput,
     if (files.isEmpty()) {
         m_busy = false;
         emit finished(false,
-            QStringLiteral("No parseable FILE blocks found in the AI response. "
-                           "Try rephrasing your requirements or checking the model output."),
+            QStringLiteral("No parseable code found in the AI response. "
+                           "Try rephrasing your requirements."),
             QString());
         return;
     }
 
     emit progress(QStringLiteral("Found %1 file(s) to generate.").arg(files.size()));
 
+    QString targetDir = projectDirectory.trimmed();
+    if (targetDir.isEmpty()) {
+        targetDir = QDir::currentPath();
+    }
+    QDir().mkpath(targetDir);
+
     // ── Git branch ──────────────────────────────────────────
-    // Check git availability
+    QString branch = branchName.trimmed();
+    if (branch.isEmpty()) {
+        branch = QStringLiteral("feat/ui-design");
+    }
+
+    bool branchCreated = false;
     QString gitVersion;
-    if (!gitRun(projectDirectory, {QStringLiteral("--version")}, &gitVersion)) {
-        // Git not available — write files without branching
-        emit progress(QStringLiteral("Note: git not found. Writing files without branch management."));
-    } else {
-        emit progress(QStringLiteral("Creating git branch: %1").arg(branchName));
-        if (!createAndCheckoutBranch(projectDirectory, branchName)) {
-            m_busy = false;
-            emit finished(false,
-                QStringLiteral("Failed to create git branch '%1'. "
-                               "Ensure the project directory is a git repository.").arg(branchName),
-                QString());
-            return;
+    if (gitRun(targetDir, {QStringLiteral("--version")}, &gitVersion) &&
+        gitRun(targetDir, {QStringLiteral("rev-parse"), QStringLiteral("--is-inside-work-tree")})) {
+        emit progress(QStringLiteral("Creating git branch: %1").arg(branch));
+        if (createAndCheckoutBranch(targetDir, branch)) {
+            branchCreated = true;
+            emit progress(QStringLiteral("Switched to branch: %1").arg(branch));
+        } else {
+            emit progress(QStringLiteral("Note: Branch checkout skipped. Writing files directly to disk..."));
         }
-        emit progress(QStringLiteral("Switched to branch: %1").arg(branchName));
+    } else {
+        emit progress(QStringLiteral("Note: Target directory is not a git repository. Writing files directly to disk."));
     }
 
     // ── Write files ─────────────────────────────────────────
-    QDir projectDir(projectDirectory);
+    QDir projectDir(targetDir);
     QStringList writtenRelPaths;
     QStringList skipped;
 
@@ -316,29 +353,29 @@ void UiDeveloper::implementFromLlmOutput(const QString &llmOutput,
     if (writtenRelPaths.isEmpty()) {
         m_busy = false;
         emit finished(false,
-            QStringLiteral("All files failed to write:\n  %1").arg(skipped.join(QStringLiteral("\n  "))),
-            branchName);
+            QStringLiteral("All files failed to write to '%1':\n  %2").arg(targetDir, skipped.join(QStringLiteral("\n  "))),
+            branch);
         return;
     }
 
     // ── Git commit ──────────────────────────────────────────
-    const QString commitMsg = QStringLiteral("feat(ui): AI-generated UI implementation\n\nGenerated files:\n  ")
-                              + writtenRelPaths.join(QStringLiteral("\n  "));
-
     bool committed = false;
-    if (!gitVersion.isEmpty()) {
-        emit progress(QStringLiteral("Committing %1 file(s) to '%2'...").arg(writtenRelPaths.size()).arg(branchName));
-        committed = commitFiles(projectDirectory, writtenRelPaths, commitMsg);
+    if (branchCreated) {
+        const QString commitMsg = QStringLiteral("feat(ui): AI-generated UI implementation\n\nGenerated files:\n  ")
+                                  + writtenRelPaths.join(QStringLiteral("\n  "));
+        emit progress(QStringLiteral("Committing %1 file(s) to '%2'...").arg(writtenRelPaths.size()).arg(branch));
+        committed = commitFiles(targetDir, writtenRelPaths, commitMsg);
         if (committed) {
-            emit progress(QStringLiteral("✓ Commit created on branch '%1' (not pushed).").arg(branchName));
-        } else {
-            emit progress(QStringLiteral("⚠ Could not commit — files are still written to disk."));
+            emit progress(QStringLiteral("✓ Commit created on branch '%1'.").arg(branch));
         }
     }
 
     // ── Summary ─────────────────────────────────────────────
     QString summary;
-    summary += QStringLiteral("**UI Implementation Complete** on branch `%1`\n\n").arg(branchName);
+    summary += QStringLiteral("✅ **UI Implementation Complete** in `%1`\n\n").arg(targetDir);
+    if (branchCreated) {
+        summary += QStringLiteral("Branch: `%1`\n\n").arg(branch);
+    }
     summary += QStringLiteral("**Generated %1 file(s):**\n").arg(writtenRelPaths.size());
     for (const QString &p : writtenRelPaths) {
         summary += QStringLiteral("  • %1\n").arg(p);
@@ -350,13 +387,11 @@ void UiDeveloper::implementFromLlmOutput(const QString &llmOutput,
         }
     }
     if (committed) {
-        summary += QStringLiteral("\nChanges are committed locally on branch `%1`. "
-                                  "Review and push when ready.").arg(branchName);
+        summary += QStringLiteral("\nChanges are committed locally on branch `%1`.").arg(branch);
     } else {
-        summary += QStringLiteral("\nFiles written to disk. Git commit was skipped — "
-                                  "please commit manually when ready.");
+        summary += QStringLiteral("\nFiles successfully written to disk.");
     }
 
     m_busy = false;
-    emit finished(true, summary, branchName);
+    emit finished(true, summary, branchCreated ? branch : QString());
 }

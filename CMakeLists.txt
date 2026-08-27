@@ -19,7 +19,7 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Find Qt6 dependencies
-find_package(Qt6 REQUIRED COMPONENTS Core Network Widgets Multimedia MultimediaWidgets TextToSpeech)
+find_package(Qt6 REQUIRED COMPONENTS Core Network Widgets Multimedia MultimediaWidgets TextToSpeech Test)
 
 # Add target executable
 add_executable(TitanAI
@@ -85,3 +85,36 @@ if(VOSK_INCLUDE_DIR AND VOSK_LIBRARY)
 else()
     message(WARNING "TitanAI: Vosk not found - speech-to-text disabled (install 'vosk-api' to enable)")
 endif()
+
+# Test runner executable
+add_executable(titanai_tests
+    tests/test_all.cpp
+    src/agent/agent.cpp
+    src/llm/ollama_client.cpp
+    src/llm/ollama_manager.cpp
+    src/tools/code_fixer.cpp
+    src/tools/disk_cleanup.cpp
+    src/tools/file_organizer.cpp
+    src/tools/package_manager.cpp
+    src/tools/system_info.cpp
+    src/tools/ui_developer.cpp
+    src/tools/update_checker.cpp
+    src/learning/task_tracker.cpp
+    src/learning/activity_analyzer.cpp
+    src/learning/suggestion_engine.cpp
+    src/calendar/calendar_manager.cpp
+    src/calendar/notification_manager.cpp
+)
+
+target_compile_features(titanai_tests PRIVATE cxx_std_20)
+target_include_directories(titanai_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_link_libraries(titanai_tests PRIVATE
+    Qt6::Core
+    Qt6::Network
+    Qt6::Widgets
+    Qt6::Test
+)
+
