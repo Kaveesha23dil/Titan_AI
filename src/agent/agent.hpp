@@ -56,7 +56,9 @@ public:
     [[nodiscard]] DiskCleanup &diskCleanup();
     [[nodiscard]] UpdateChecker &updateChecker();
 
-    // UI Design-to-Code feature
+    // UI Design-to-Code & Development controls
+    void setCodeDevelopmentEnabled(bool enabled);
+    [[nodiscard]] bool isCodeDevelopmentEnabled() const;
     void developUi(const QImage &designImage,
                    const QString &requirements,
                    const QString &branchName,
@@ -128,6 +130,7 @@ private:
     DiskCleanup m_diskCleanup;
     UpdateChecker m_updateChecker;
     UiDeveloper m_uiDeveloper;
+    bool m_codeDevelopmentEnabled{false};
     bool m_autoFixEnabled{false};
     bool m_codeFixInProgress{false};
     QString m_projectDirectory;

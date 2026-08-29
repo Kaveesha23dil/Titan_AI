@@ -153,6 +153,16 @@ void Agent::unloadModel()
     m_ollamaClient.unloadModel();
 }
 
+void Agent::setCodeDevelopmentEnabled(bool enabled)
+{
+    m_codeDevelopmentEnabled = enabled;
+}
+
+bool Agent::isCodeDevelopmentEnabled() const
+{
+    return m_codeDevelopmentEnabled;
+}
+
 void Agent::setAutoFixEnabled(bool enabled)
 {
     if (m_autoFixEnabled == enabled) {
@@ -184,6 +194,12 @@ bool Agent::isCodeFixBusy() const
 
 void Agent::runBuildAndFix()
 {
+    if (!m_codeDevelopmentEnabled) {
+        emit codeFixFinished(
+            QStringLiteral("⏸️ Code development is currently frozen. Say 'enable code development' or enable it in Dev Hub to resume."),
+            false);
+        return;
+    }
     if (m_codeFixInProgress) {
         emit codeFixFinished(QStringLiteral("A code-fix operation is already running."), false);
         return;
@@ -203,6 +219,39 @@ void Agent::onPackageManagerFinished(bool success, const QString &summary)
 bool Agent::handleAutoFixToggleQuery(const QString &message)
 {
     QString lower = message.toLower().simplified();
+
+    // ── Code Development Freeze / Unfreeze ───────────────────
+    if (lower.contains(QStringLiteral("code development")) ||
+        lower.contains(QStringLiteral("coding assistant")) ||
+        lower.contains(QStringLiteral("code generation"))) {
+
+        if (lower.contains(QStringLiteral("freeze")) ||
+            lower.contains(QStringLiteral("disable")) ||
+            lower.contains(QStringLiteral("pause")) ||
+            lower.contains(QStringLiteral("turn off")) ||
+            lower.contains(QStringLiteral("stop"))) {
+            setCodeDevelopmentEnabled(false);
+            emit responseReceived(QStringLiteral("⏸️ **Code development is now frozen.** Automated code writing, UI generation, and code fixing are paused until you request to enable them."));
+            return true;
+        }
+
+        if (lower.contains(QStringLiteral("enable")) ||
+            lower.contains(QStringLiteral("unfreeze")) ||
+            lower.contains(QStringLiteral("resume")) ||
+            lower.contains(QStringLiteral("turn on")) ||
+            lower.contains(QStringLiteral("start"))) {
+            setCodeDevelopmentEnabled(true);
+            emit responseReceived(QStringLiteral("✅ **Code development has been enabled.** You can now generate UI components and run auto-fix."));
+            return true;
+        }
+
+        if (lower.contains(QStringLiteral("is")) || lower.contains(QStringLiteral("status"))) {
+            emit responseReceived(QStringLiteral("Code development is currently **%1**.")
+                .arg(m_codeDevelopmentEnabled ? QStringLiteral("enabled") : QStringLiteral("frozen")));
+            return true;
+        }
+    }
+
     if (!lower.contains(QStringLiteral("auto fix")) && !lower.contains(QStringLiteral("autofix"))) {
         return false;
     }
@@ -1226,6 +1275,14 @@ bool Agent::handleUiDevelopmentQuery(const QString &message, const QImage &image
         return false;
     }
 
+    if (!m_codeDevelopmentEnabled) {
+        emit responseReceived(
+            QStringLiteral("⏸️ **Code development is currently frozen.**\n"
+                           "Automated UI generation and code editing are paused. "
+                           "When you are ready, say **'enable code development'** or toggle it in the Developer Hub to resume."));
+        return true;
+    }
+
     if (m_uiDeveloper.isBusy()) {
         emit responseReceived(
             QStringLiteral("A UI generation is already in progress. Please wait for it to finish."));
@@ -1257,6 +1314,13 @@ void Agent::developUi(const QImage &designImage,
                       const QString &branchName,
                       UiDeveloper::Framework framework)
 {
+    if (!m_codeDevelopmentEnabled) {
+        emit uiDevelopmentFinished(false,
+            QStringLiteral("Code development is currently frozen. Say 'enable code development' or toggle it in the Developer Hub to resume."),
+            QString());
+        return;
+    }
+
     if (m_uiDeveloper.isBusy()) {
         emit uiDevelopmentProgress(QStringLiteral("UI generation already in progress."));
         return;

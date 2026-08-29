@@ -1598,6 +1598,13 @@ void MainWindow::onBrowseProject()
 
 void MainWindow::onBuildAndFixClicked()
 {
+    if (!m_agent.isCodeDevelopmentEnabled()) {
+        navigateTo(1);
+        appendMessage(QStringLiteral("TitanAI"),
+                      QStringLiteral("⏸️ Code development is currently frozen. Say 'enable code development' to resume."),
+                      Col::Warning);
+        return;
+    }
     if (m_agent.isCodeFixBusy()) {
         return;
     }
@@ -2010,6 +2017,13 @@ void MainWindow::onClearUiDesignImage()
 
 void MainWindow::onGenerateUiClicked()
 {
+    if (!m_agent.isCodeDevelopmentEnabled()) {
+        m_uiStatusLabel->setText(
+            QStringLiteral("⏸️ Code development is currently frozen. Say 'enable code development' to resume."));
+        m_uiStatusLabel->show();
+        return;
+    }
+
     const QString requirements = m_uiRequirementsEdit->toPlainText().trimmed();
     if (requirements.isEmpty() && m_uiDesignImage.isNull()) {
         m_uiStatusLabel->setText(
