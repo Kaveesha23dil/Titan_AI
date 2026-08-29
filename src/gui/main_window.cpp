@@ -727,6 +727,61 @@ QWidget *MainWindow::createDevHubPage()
         return btn;
     };
 
+    // ── ⓪ AI Performance & Memory Profile ─────────────────
+    auto *perfBox = new QGroupBox(QStringLiteral("⚡  AI Memory & Performance Profile"), content);
+    auto *perfLayout = new QVBoxLayout(perfBox);
+    perfLayout->setSpacing(10);
+
+    auto *perfRow = new QHBoxLayout;
+    auto *perfLabel = new QLabel(QStringLiteral("Model Profile:"), perfBox);
+    perfLabel->setFixedWidth(100);
+
+    m_aiModelCombo = new QComboBox(perfBox);
+    m_aiModelCombo->addItem(QStringLiteral("⚡ Low RAM Mode (Qwen2.5-Coder 1.5B ~980MB RAM)"), QStringLiteral("qwen2.5-coder:1.5b"));
+    m_aiModelCombo->addItem(QStringLiteral("🧠 Standard Mode (Qwen2.5-Coder 3B ~1.9GB RAM)"), QStringLiteral("qwen2.5-coder:3b"));
+    if (m_agent.currentModel() == QStringLiteral("qwen2.5-coder:3b")) {
+        m_aiModelCombo->setCurrentIndex(1);
+    } else {
+        m_aiModelCombo->setCurrentIndex(0);
+    }
+    m_aiModelCombo->setStyleSheet(QStringLiteral(
+        "QComboBox { background: %1; border: 1px solid %2; border-radius: 6px; "
+        "            color: %3; padding: 6px 12px; } "
+        "QComboBox::drop-down { border: none; } "
+        "QComboBox QAbstractItemView { background: %1; color: %3; selection-background-color: %4; }"
+    ).arg(Col::BgCard, Col::Border, Col::TextPrimary, Col::Accent));
+
+    connect(m_aiModelCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &MainWindow::onModelChanged);
+
+    auto *freeRamBtn = new QPushButton(QStringLiteral("🧹 Free AI RAM"), perfBox);
+    freeRamBtn->setToolTip(QStringLiteral("Immediately unload Ollama model weights from RAM"));
+    freeRamBtn->setCursor(Qt::PointingHandCursor);
+    freeRamBtn->setStyleSheet(QStringLiteral(
+        "QPushButton { background: %1; border: 1px solid %2; border-radius: 6px; "
+        "              color: %3; padding: 6px 12px; font-weight: 600; }"
+        "QPushButton:hover { background: %4; color: white; border-color: %4; }"
+    ).arg(Col::BgCard, Col::Border, Col::Warning, Col::Warning));
+
+    connect(freeRamBtn, &QPushButton::clicked, this, [this, freeRamBtn]() {
+        m_agent.unloadModel();
+        freeRamBtn->setText(QStringLiteral("✓ RAM Freed!"));
+        QTimer::singleShot(2000, freeRamBtn, [freeRamBtn]() {
+            freeRamBtn->setText(QStringLiteral("🧹 Free AI RAM"));
+        });
+    });
+
+    perfRow->addWidget(perfLabel);
+    perfRow->addWidget(m_aiModelCombo, 1);
+    perfRow->addWidget(freeRamBtn);
+    perfLayout->addLayout(perfRow);
+
+    auto *perfNote = new QLabel(
+        QStringLiteral("Auto-sleep enabled: Ollama automatically releases RAM after 5 minutes of idle time."), perfBox);
+    perfNote->setStyleSheet(QStringLiteral("color: %1; font-size: 11px;").arg(Col::TextMuted));
+    perfLayout->addWidget(perfNote);
+    layout->addWidget(perfBox);
+
     // ── ① Auto-Fix Code Errors ──────────────────────────────
     auto *fixerBox = new QGroupBox(QStringLiteral("🔧  Auto-Fix Code Errors"), content);
     auto *fixerLayout = new QVBoxLayout(fixerBox);
@@ -2028,4 +2083,29 @@ void MainWindow::onUiDevelopmentFinished(bool success, const QString &summary, c
     appendMessage(QStringLiteral("TitanAI"), summary,
                   success ? QLatin1String(Col::AccentGlow) : QLatin1String(Col::Danger));
     setInputEnabled(true);
+}
+
+void MainWindow::onModelChanged(int index)
+{
+    if (!m_aiModelCombo) {
+        return;
+    }
+    const QString selectedModel = m_aiModelCombo->itemData(index).toString();
+    if (selectedModel.isEmpty() || selectedModel == m_agent.currentModel()) {
+        return;
+    }
+
+    // Unload old model to reclaim RAM before switching
+    m_agent.unloadModel();
+    m_agent.setModel(selectedModel);
+
+    appendMessage(QStringLiteral("TitanAI"),
+                  QStringLiteral("Switched active AI model to `%1`.").arg(selectedModel),
+                  Col::AccentGlow);
+}
+
+void MainWindow::closeEvent(QCloseEvent *event)
+{
+    m_agent.unloadModel(); // Immediately evict model weights from RAM on exit
+    QMainWindow::closeEvent(event);
 }

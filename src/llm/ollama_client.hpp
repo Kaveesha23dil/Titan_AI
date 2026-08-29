@@ -23,6 +23,7 @@ public:
     void setModel(const QString &model);
     [[nodiscard]] const QString& model() const;
     void warmUp();
+    void unloadModel();
     void clearHistory();
     [[nodiscard]] const QJsonArray& history() const;
 

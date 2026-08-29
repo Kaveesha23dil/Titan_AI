@@ -32,6 +32,9 @@ public:
     void sendMessage(const QString &message);
     void sendImageMessage(const QImage &image, const QString &text);
     void initializeModel(const QString &model);
+    void setModel(const QString &model);
+    [[nodiscard]] QString currentModel() const;
+    void unloadModel();
     void performInstall(const QStringList &packages);
     void setAutoFixEnabled(bool enabled);
     [[nodiscard]] bool autoFixEnabled() const;

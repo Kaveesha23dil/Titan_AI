@@ -61,6 +61,10 @@ private slots:
     void onCalendarEventsReady(const QString &eventsSummary);
     void onCalendarNotificationAlert(const QString &title, const QString &message);
     void onOpenCalendarSettings();
+    void onModelChanged(int index);
+
+protected:
+    void closeEvent(QCloseEvent *event) override;
 
 private:
     // --- UI setup helpers ---
@@ -131,6 +135,7 @@ private:
     QProgressBar *m_micLevelBar{nullptr};
 
     // --- Dev Hub widgets ---
+    QComboBox *m_aiModelCombo{nullptr};
     QCheckBox *m_autoFixCheck{nullptr};
     QLineEdit *m_projectEdit{nullptr};
     QPushButton *m_browseButton{nullptr};

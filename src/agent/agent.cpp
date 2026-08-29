@@ -138,6 +138,21 @@ void Agent::sendImageMessage(const QImage &image, const QString &text)
     }
 }
 
+void Agent::setModel(const QString &model)
+{
+    m_ollamaClient.setModel(model);
+}
+
+QString Agent::currentModel() const
+{
+    return m_ollamaClient.model();
+}
+
+void Agent::unloadModel()
+{
+    m_ollamaClient.unloadModel();
+}
+
 void Agent::setAutoFixEnabled(bool enabled)
 {
     if (m_autoFixEnabled == enabled) {
