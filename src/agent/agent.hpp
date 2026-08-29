@@ -24,7 +24,7 @@ class Agent : public QObject {
     Q_OBJECT
 
 public:
-    static constexpr const char *kDefaultModel = "qwen2.5-coder:1.5b";
+    static constexpr const char *kDefaultModel = "qwen2.5-coder:3b";
 
     explicit Agent(QObject *parent = nullptr);
     ~Agent() override = default;
@@ -32,6 +32,9 @@ public:
     void sendMessage(const QString &message);
     void sendImageMessage(const QImage &image, const QString &text);
     void initializeModel(const QString &model);
+    void setModel(const QString &model);
+    [[nodiscard]] QString currentModel() const;
+    void unloadModel();
     void performInstall(const QStringList &packages);
     void setAutoFixEnabled(bool enabled);
     [[nodiscard]] bool autoFixEnabled() const;

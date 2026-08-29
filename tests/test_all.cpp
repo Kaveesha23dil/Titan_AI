@@ -119,7 +119,7 @@ private slots:
 
     void testOllamaConnectionAndInference() {
         OllamaClient client;
-        client.setModel(QStringLiteral("qwen2.5-coder:1.5b"));
+        client.setModel(QString::fromLatin1(Agent::kDefaultModel));
 
         bool received = false;
         QString receivedResponse;
@@ -136,7 +136,7 @@ private slots:
             QCoreApplication::quit();
         });
 
-        std::cout << "Testing live Ollama inference (qwen2.5-coder:1.5b)..." << std::endl;
+        std::cout << "Testing live Ollama inference (" << Agent::kDefaultModel << ")..." << std::endl;
         client.sendPrompt(QStringLiteral("Say 'OK' if you can read this."));
 
         QTimer timeoutTimer;
@@ -144,7 +144,7 @@ private slots:
         connect(&timeoutTimer, &QTimer::timeout, [&]() {
             QCoreApplication::quit();
         });
-        timeoutTimer.start(10000); // 10 second timeout
+        timeoutTimer.start(30000); // 30 second timeout for cold load
 
         qApp->exec();
 
@@ -158,7 +158,7 @@ private slots:
 
     void testOllamaNonStreamingCompletion() {
         OllamaClient client;
-        client.setModel(QStringLiteral("qwen2.5-coder:1.5b"));
+        client.setModel(QString::fromLatin1(Agent::kDefaultModel));
 
         bool received = false;
         QString receivedResponse;
@@ -175,7 +175,7 @@ private slots:
             QCoreApplication::quit();
         });
 
-        std::cout << "Testing non-streaming requestCompletion (qwen2.5-coder:1.5b)..." << std::endl;
+        std::cout << "Testing non-streaming requestCompletion (" << Agent::kDefaultModel << ")..." << std::endl;
         client.requestCompletion(QStringLiteral("Write 'SUCCESS'"));
 
         QTimer timeoutTimer;
@@ -183,7 +183,7 @@ private slots:
         connect(&timeoutTimer, &QTimer::timeout, [&]() {
             QCoreApplication::quit();
         });
-        timeoutTimer.start(10000);
+        timeoutTimer.start(30000);
 
         qApp->exec();
 

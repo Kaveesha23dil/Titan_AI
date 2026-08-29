@@ -10,10 +10,13 @@ namespace {
 QJsonObject defaultOllamaOptions()
 {
     QJsonObject opts;
-    opts[QStringLiteral("num_ctx")] = 2048;    // Bound memory footprint to prevent swapping
-    opts[QStringLiteral("num_thread")] = 6;    // Utilize 6 CPU threads for fast token generation
+    opts[QStringLiteral("num_ctx")] = 1536;    // Optimal context buffer (saves ~25% RAM)
+    opts[QStringLiteral("num_thread")] = 4;   // 4 physical CPU cores (prevents hyperthreading thread contention and CPU lockup)
+    opts[QStringLiteral("num_batch")] = 256;  // Smaller batch size saves compute buffer memory
     return opts;
 }
+
+const QString kDefaultKeepAlive = QStringLiteral("5m"); // Automatically unload model from RAM after 5 min idle
 
 } // namespace
 
@@ -53,8 +56,26 @@ void OllamaClient::warmUp()
     payloadObj[QStringLiteral("model")] = m_model;
     payloadObj[QStringLiteral("prompt")] = QString();
     payloadObj[QStringLiteral("stream")] = false;
-    payloadObj[QStringLiteral("keep_alive")] = -1;
+    payloadObj[QStringLiteral("keep_alive")] = kDefaultKeepAlive;
     payloadObj[QStringLiteral("options")] = defaultOllamaOptions();
+
+    QJsonDocument payloadDoc(payloadObj);
+    QByteArray postData = payloadDoc.toJson(QJsonDocument::Compact);
+
+    QNetworkReply *reply = m_networkManager.post(request, postData);
+    connect(reply, &QNetworkReply::finished, this, [reply]() {
+        reply->deleteLater();
+    });
+}
+
+void OllamaClient::unloadModel()
+{
+    QNetworkRequest request(m_warmupUrl);
+    request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+
+    QJsonObject payloadObj;
+    payloadObj[QStringLiteral("model")] = m_model;
+    payloadObj[QStringLiteral("keep_alive")] = 0; // 0 immediately evicts model weights from RAM
 
     QJsonDocument payloadDoc(payloadObj);
     QByteArray postData = payloadDoc.toJson(QJsonDocument::Compact);
@@ -114,6 +135,17 @@ void OllamaClient::sendChatMessage(const QJsonObject &userMessageObj)
 {
     m_history.append(userMessageObj);
 
+    // Keep history bounded to last 10 messages to prevent exponential memory/CPU growth
+    constexpr int kMaxHistoryEntries = 10;
+    if (m_history.size() > kMaxHistoryEntries) {
+        QJsonArray trimmedHistory;
+        const int startIndex = m_history.size() - kMaxHistoryEntries;
+        for (int i = startIndex; i < m_history.size(); ++i) {
+            trimmedHistory.append(m_history.at(i));
+        }
+        m_history = trimmedHistory;
+    }
+
     QNetworkRequest request(m_endpointUrl);
     request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
 
@@ -133,7 +165,7 @@ void OllamaClient::sendChatMessage(const QJsonObject &userMessageObj)
     payloadObj[QStringLiteral("model")] = m_model;
     payloadObj[QStringLiteral("messages")] = messagesWithSystem;
     payloadObj[QStringLiteral("stream")] = true;
-    payloadObj[QStringLiteral("keep_alive")] = -1;
+    payloadObj[QStringLiteral("keep_alive")] = kDefaultKeepAlive;
     payloadObj[QStringLiteral("options")] = defaultOllamaOptions();
 
     QJsonDocument payloadDoc(payloadObj);
@@ -177,7 +209,7 @@ void OllamaClient::requestCompletion(const QString &prompt)
     payloadObj[QStringLiteral("model")] = m_model;
     payloadObj[QStringLiteral("messages")] = messages;
     payloadObj[QStringLiteral("stream")] = false;
-    payloadObj[QStringLiteral("keep_alive")] = -1;
+    payloadObj[QStringLiteral("keep_alive")] = kDefaultKeepAlive;
     payloadObj[QStringLiteral("options")] = defaultOllamaOptions();
 
     QNetworkReply *reply = m_networkManager.post(
@@ -222,7 +254,7 @@ void OllamaClient::requestImageCompletion(const QString &prompt,
     payloadObj[QStringLiteral("model")]      = targetModel;
     payloadObj[QStringLiteral("messages")]   = messages;
     payloadObj[QStringLiteral("stream")]     = false;
-    payloadObj[QStringLiteral("keep_alive")] = -1;
+    payloadObj[QStringLiteral("keep_alive")] = kDefaultKeepAlive;
     payloadObj[QStringLiteral("options")]    = defaultOllamaOptions();
 
     QNetworkReply *reply = m_networkManager.post(
