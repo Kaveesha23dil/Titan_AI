@@ -1,5 +1,6 @@
 #include "tools/update_checker.hpp"
 
+#include <QDateTime>
 #include <QFileInfo>
 #include <QRegularExpression>
 #include <QStandardPaths>
@@ -8,7 +9,7 @@
 namespace {
 
 constexpr int kMaxUpdatesInReport = 40;
-constexpr int kNameColumnWidth = -24;
+constexpr int kNameColumnWidth    = -24;
 constexpr int kVersionColumnWidth = -20;
 
 QString executablePath(const QString &name)
@@ -28,7 +29,7 @@ QList<InstalledPackage> parseInstalledPackages(const QString &output)
             continue;
         }
         InstalledPackage pkg;
-        pkg.name = line.left(spaceIdx).trimmed();
+        pkg.name    = line.left(spaceIdx).trimmed();
         pkg.version = line.mid(spaceIdx + 1).trimmed();
         if (!pkg.name.isEmpty() && !pkg.version.isEmpty()) {
             result.append(pkg);
@@ -44,24 +45,23 @@ bool parseUpdateLine(const QString &line, PendingUpdate &out)
         return false;
     }
 
-    // Format A: "[repo/]name current-version -> new-version"  (pacman -Qu,
-    // checkupdates, and AUR helpers all use this shape)
+    // Format A: "[repo/]name current-version -> new-version"
     const QStringList halves = trimmed.split(QStringLiteral(" -> "));
     if (halves.size() == 2) {
-        const QStringList left =
+        const QStringList left  =
             halves.at(0).split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
         const QStringList right =
             halves.at(1).split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
         if (left.size() < 2 || right.isEmpty()) {
             return false;
         }
-        out.name = left.at(left.size() - 2);
+        out.name           = left.at(left.size() - 2);
         out.currentVersion = left.last();
         out.repository.clear();
         if (out.name.contains(QLatin1Char('/'))) {
             const int slashIdx = out.name.lastIndexOf(QLatin1Char('/'));
             out.repository = out.name.left(slashIdx);
-            out.name = out.name.mid(slashIdx + 1);
+            out.name       = out.name.mid(slashIdx + 1);
         }
         out.newVersion = right.first();
         return !out.name.isEmpty();
@@ -71,10 +71,10 @@ bool parseUpdateLine(const QString &line, PendingUpdate &out)
     const QStringList tokens =
         trimmed.split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
     if (tokens.size() == 4 && !tokens.at(0).contains(QLatin1Char('-'))) {
-        out.repository = tokens.at(0);
-        out.name = tokens.at(1);
+        out.repository     = tokens.at(0);
+        out.name           = tokens.at(1);
         out.currentVersion = tokens.at(2);
-        out.newVersion = tokens.at(3);
+        out.newVersion     = tokens.at(3);
         return true;
     }
 
@@ -83,14 +83,20 @@ bool parseUpdateLine(const QString &line, PendingUpdate &out)
 
 } // namespace
 
+// ---------------------------------------------------------------------------
+// Constructor / destructor
+// ---------------------------------------------------------------------------
 UpdateChecker::UpdateChecker(QObject *parent)
     : QObject(parent)
 {
+    connect(&m_periodicTimer, &QTimer::timeout, this, &UpdateChecker::onPeriodicTimerFired);
 }
 
 UpdateChecker::~UpdateChecker()
 {
-    const QList<QProcess *> processes = { m_installedProcess, m_repoUpdatesProcess, m_aurProcess };
+    m_periodicTimer.stop();
+    const QList<QProcess *> processes = { m_installedProcess, m_repoUpdatesProcess,
+                                          m_aurProcess, m_applyProcess };
     for (QProcess *process : processes) {
         if (process && process->state() != QProcess::NotRunning) {
             process->terminate();
@@ -101,6 +107,9 @@ UpdateChecker::~UpdateChecker()
     }
 }
 
+// ---------------------------------------------------------------------------
+// Manual check
+// ---------------------------------------------------------------------------
 void UpdateChecker::startCheck()
 {
     if (m_checking) {
@@ -111,12 +120,10 @@ void UpdateChecker::startCheck()
     m_checking = true;
 
     emit checkStarted();
-
     startProcessQueries();
 
     if (m_installedDone && m_repoUpdatesDone && m_aurDone) {
         finishCheck();
-        return;
     }
 }
 
@@ -128,6 +135,163 @@ void UpdateChecker::cancelCheck()
     resetState();
 }
 
+// ---------------------------------------------------------------------------
+// Periodic auto-check
+// ---------------------------------------------------------------------------
+void UpdateChecker::startPeriodicCheck(int intervalMinutes)
+{
+    m_periodicCheckActive = true;
+    m_periodicTimer.setInterval(intervalMinutes * 60 * 1000);
+    m_periodicTimer.start();
+}
+
+void UpdateChecker::stopPeriodicCheck()
+{
+    m_periodicCheckActive = false;
+    m_periodicTimer.stop();
+}
+
+bool UpdateChecker::isPeriodicCheckActive() const
+{
+    return m_periodicCheckActive && m_periodicTimer.isActive();
+}
+
+void UpdateChecker::onPeriodicTimerFired()
+{
+    if (m_checking || m_applying) {
+        return; // Skip this tick — a check or apply is already running
+    }
+    m_isPeriodicFire = true;
+    startCheck();
+}
+
+// ---------------------------------------------------------------------------
+// Apply updates
+// ---------------------------------------------------------------------------
+QString UpdateChecker::findTerminalEmulator() const
+{
+    // Try common terminal emulators in preferred order
+    static const QStringList kTerminals = {
+        QStringLiteral("konsole"),
+        QStringLiteral("alacritty"),
+        QStringLiteral("kitty"),
+        QStringLiteral("gnome-terminal"),
+        QStringLiteral("xfce4-terminal"),
+        QStringLiteral("xterm"),
+    };
+    for (const QString &term : kTerminals) {
+        const QString path = executablePath(term);
+        if (!path.isEmpty()) {
+            return path;
+        }
+    }
+    return {};
+}
+
+void UpdateChecker::applyUpdates(bool aurToo)
+{
+    if (m_applying || m_checking) {
+        emit updatesApplyError(
+            QStringLiteral("A check or apply operation is already in progress."));
+        return;
+    }
+
+    m_applying = true;
+
+    // Build the command to run
+    QString updateCmd;
+    if (aurToo && !m_aurHelper.isEmpty()) {
+        // AUR helper handles both official and AUR packages
+        updateCmd = QStringLiteral("%1 -Syu").arg(m_aurHelper);
+    } else {
+        updateCmd = QStringLiteral("sudo pacman -Syu");
+    }
+
+    const QString termPath = findTerminalEmulator();
+    if (!termPath.isEmpty()) {
+        // Launch in a terminal window so the user can see full output and enter password
+        const QString termName = QFileInfo(termPath).fileName();
+
+        QStringList args;
+        if (termName == QLatin1String("konsole")) {
+            args << QStringLiteral("--hold") << QStringLiteral("-e")
+                 << QStringLiteral("bash") << QStringLiteral("-c") << updateCmd;
+        } else if (termName == QLatin1String("alacritty")) {
+            args << QStringLiteral("-e")
+                 << QStringLiteral("bash") << QStringLiteral("-c")
+                 << QStringLiteral("%1; echo; echo '-- Press Enter to close --'; read").arg(updateCmd);
+        } else if (termName == QLatin1String("kitty")) {
+            args << QStringLiteral("bash") << QStringLiteral("-c")
+                 << QStringLiteral("%1; echo; echo '-- Press Enter to close --'; read").arg(updateCmd);
+        } else if (termName == QLatin1String("gnome-terminal")) {
+            args << QStringLiteral("--") << QStringLiteral("bash") << QStringLiteral("-c")
+                 << QStringLiteral("%1; echo; read -p '-- Press Enter to close --'").arg(updateCmd);
+        } else if (termName == QLatin1String("xfce4-terminal")) {
+            args << QStringLiteral("--hold") << QStringLiteral("-x")
+                 << QStringLiteral("bash") << QStringLiteral("-c") << updateCmd;
+        } else {
+            // xterm fallback
+            args << QStringLiteral("-hold") << QStringLiteral("-e")
+                 << QStringLiteral("bash") << QStringLiteral("-c") << updateCmd;
+        }
+
+        emit updatesApplyStarted(updateCmd);
+
+        m_applyProcess = new QProcess(this);
+        m_applyProcess->setProgram(termPath);
+        m_applyProcess->setArguments(args);
+        connect(m_applyProcess, &QProcess::readyReadStandardOutput, this, &UpdateChecker::onApplyReadyRead);
+        connect(m_applyProcess, &QProcess::readyReadStandardError,  this, &UpdateChecker::onApplyReadyRead);
+        connect(m_applyProcess, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+                this, &UpdateChecker::onApplyFinished);
+        m_applyProcess->start();
+
+        if (!m_applyProcess->waitForStarted(3000)) {
+            emit updatesApplyError(
+                QStringLiteral("Could not launch terminal emulator '%1'.").arg(termPath));
+            m_applying = false;
+            m_applyProcess->deleteLater();
+            m_applyProcess = nullptr;
+        }
+    } else {
+        // No terminal found — run headlessly and stream output ourselves
+        emit updatesApplyStarted(updateCmd);
+        emit updatesApplyOutput(QStringLiteral("⚠ No terminal emulator found. Running headlessly. Output:"));
+
+        m_applyProcess = new QProcess(this);
+        m_applyProcess->setProgram(QStringLiteral("bash"));
+        m_applyProcess->setArguments({ QStringLiteral("-c"), updateCmd });
+        m_applyProcess->setProcessChannelMode(QProcess::MergedChannels);
+        connect(m_applyProcess, &QProcess::readyReadStandardOutput, this, &UpdateChecker::onApplyReadyRead);
+        connect(m_applyProcess, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+                this, &UpdateChecker::onApplyFinished);
+        m_applyProcess->start();
+    }
+}
+
+void UpdateChecker::onApplyReadyRead()
+{
+    if (!m_applyProcess) return;
+    const QString out = QString::fromLocal8Bit(m_applyProcess->readAll()).trimmed();
+    if (!out.isEmpty()) {
+        emit updatesApplyOutput(out);
+    }
+}
+
+void UpdateChecker::onApplyFinished(int exitCode, QProcess::ExitStatus status)
+{
+    m_applying = false;
+    const bool ok = (status == QProcess::NormalExit && exitCode == 0);
+    if (m_applyProcess) {
+        m_applyProcess->deleteLater();
+        m_applyProcess = nullptr;
+    }
+    emit updatesApplyFinished(ok);
+}
+
+// ---------------------------------------------------------------------------
+// Internal: run pacman queries
+// ---------------------------------------------------------------------------
 bool UpdateChecker::usesSafeUpdateChecker() const
 {
     return m_repoUpdateCommand == QLatin1String("checkupdates");
@@ -139,7 +303,7 @@ void UpdateChecker::startProcessQueries()
     m_updates.clear();
     m_aurHelper.clear();
 
-    // 1) Installed package versions: "pacman -Q" (name + version per line).
+    // 1) Installed packages via "pacman -Q"
     const QString pacman = executablePath(QStringLiteral("pacman"));
     if (!pacman.isEmpty()) {
         m_installedDone = false;
@@ -160,14 +324,11 @@ void UpdateChecker::startProcessQueries()
         return;
     }
 
-    // 2) Pending repository updates. Prefer 'checkupdates' (pacman-contrib):
-    // it syncs a throwaway copy of the databases as an unprivileged user and
-    // never touches the real system state.
+    // 2) Pending repo updates
     const QString checkupdates = executablePath(QStringLiteral("checkupdates"));
     if (!checkupdates.isEmpty()) {
         m_repoUpdateCommand = QStringLiteral("checkupdates");
     } else {
-        // Fallback: compare against the last synced database (may be stale).
         m_repoUpdateCommand = pacman;
     }
 
@@ -179,7 +340,6 @@ void UpdateChecker::startProcessQueries()
     if (m_repoUpdateCommand == QLatin1String("checkupdates")) {
         emit checkProgress(QStringLiteral("Checking repository updates..."));
     } else {
-        // Fallback: compare against the last synced database (may be stale).
         m_repoUpdatesProcess->setArguments({ QStringLiteral("-Qu") });
         emit checkProgress(QStringLiteral("Checking repository updates (last synced database)..."));
     }
@@ -191,14 +351,14 @@ void UpdateChecker::startProcessQueries()
     });
     m_repoUpdatesProcess->start();
 
-    // 3) Pending AUR updates via the user's helper, if one is installed.
+    // 3) Pending AUR updates
     QString aur = executablePath(QStringLiteral("paru"));
     if (aur.isEmpty()) {
         aur = executablePath(QStringLiteral("yay"));
     }
     if (!aur.isEmpty()) {
         m_aurHelper = QFileInfo(aur).fileName();
-        m_aurDone = false;
+        m_aurDone   = false;
         m_aurProcess = new QProcess(this);
         m_aurProcess->setProgram(aur);
         m_aurProcess->setArguments({ QStringLiteral("-Qua") });
@@ -209,7 +369,6 @@ void UpdateChecker::startProcessQueries()
             checkCompletion();
         });
         m_aurProcess->start();
-
         emit checkProgress(QStringLiteral("Checking AUR updates..."));
     }
 }
@@ -292,8 +451,16 @@ void UpdateChecker::finishCheck()
                          return a.name.compare(b.name, Qt::CaseInsensitive) < 0;
                      });
 
+    m_lastCheckTime = QDateTime::currentDateTime();
     m_checking = false;
+
+    const bool wasPeriodicFire = m_isPeriodicFire;
+    m_isPeriodicFire = false;
+
     emit checkFinished(m_updates.size());
+    if (wasPeriodicFire) {
+        emit periodicCheckDone(m_updates.size());
+    }
 }
 
 void UpdateChecker::resetState()
@@ -315,28 +482,46 @@ void UpdateChecker::resetState()
     m_updates.clear();
     m_aurHelper.clear();
     m_repoUpdateCommand.clear();
-    m_installedDone = true;
-    m_repoUpdatesDone = true;
-    m_aurDone = true;
-    m_checking = false;
+    m_installedDone    = true;
+    m_repoUpdatesDone  = true;
+    m_aurDone          = true;
+    m_checking         = false;
+    m_isPeriodicFire   = false;
+}
+
+// ---------------------------------------------------------------------------
+// Formatted output
+// ---------------------------------------------------------------------------
+QString UpdateChecker::lastCheckTimeString() const
+{
+    if (!m_lastCheckTime.isValid()) {
+        return QStringLiteral("Never");
+    }
+    const qint64 secsAgo = m_lastCheckTime.secsTo(QDateTime::currentDateTime());
+    if (secsAgo < 60) {
+        return QStringLiteral("Just now");
+    } else if (secsAgo < 3600) {
+        return QStringLiteral("%1 min ago").arg(secsAgo / 60);
+    }
+    return m_lastCheckTime.toString(QStringLiteral("hh:mm dd/MM"));
 }
 
 QString UpdateChecker::formatUpdateReport() const
 {
     const int officialCount = static_cast<int>(std::count_if(
         m_updates.cbegin(), m_updates.cend(),
-        [](const PendingUpdate &update) { return !update.isAur(); }));
+        [](const PendingUpdate &u) { return !u.isAur(); }));
     const int aurCount = m_updates.size() - officialCount;
 
     QString report;
     report += QStringLiteral("Installed packages: %1\n\n").arg(m_installed.size());
 
     if (m_updates.isEmpty()) {
-        report += QStringLiteral("All your packages are up to date.");
+        report += QStringLiteral("✅ All your packages are up to date.");
         return report;
     }
 
-    report += QStringLiteral("Pending updates: %1").arg(m_updates.size());
+    report += QStringLiteral("📦 Pending updates: %1").arg(m_updates.size());
     if (aurCount > 0) {
         report += QStringLiteral(" (official %1, AUR %2)").arg(officialCount).arg(aurCount);
     }
@@ -379,8 +564,8 @@ QString UpdateChecker::formatUpdateReport() const
             "check reliably without touching your system state.");
     }
 
-    report += QStringLiteral("\n\nThis is a preview only - TitanAI never installs "
-                             "anything on its own. Review the list before updating.");
+    report += QStringLiteral("\n\nThis is a preview only - use the buttons in Dev Hub or "
+                             "run the command above to apply updates.");
     return report.trimmed();
 }
 
@@ -388,4 +573,3 @@ QString UpdateChecker::formatInstalledSummary() const
 {
     return QStringLiteral("%1 package(s) installed on this system.").arg(m_installed.size());
 }
-

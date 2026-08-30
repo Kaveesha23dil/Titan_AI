@@ -28,6 +28,8 @@
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QStackedWidget>
+#include <QSpinBox>
+#include <QSystemTrayIcon>
 #include <QTextBrowser>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -1121,24 +1123,113 @@ QWidget *MainWindow::createDevHubPage()
     cleanupLayout->addWidget(m_diskCleanupButton, 0, Qt::AlignLeft);
     layout->addWidget(cleanupBox);
 
-    // ── ⑤ Update Checker ────────────────────────────────────
-    auto *updatesBox = new QGroupBox(QStringLiteral("🔄  Update Checker"), content);
+    // ── ⑤ Update Checker ──────────────────────────────────────
+    auto *updatesBox    = new QGroupBox(QStringLiteral("🔄  Update Checker"), content);
     auto *updatesLayout = new QVBoxLayout(updatesBox);
-    updatesLayout->setSpacing(12);
+    updatesLayout->setSpacing(10);
 
-    auto *updatesDesc = new QLabel(
-        QStringLiteral("Track installed package versions and see which packages have newer "
-                       "versions available (official repositories and AUR)."),
+    // Header row: description + count badge
+    auto *updHeaderRow = new QHBoxLayout;
+    auto *updatesDesc  = new QLabel(
+        QStringLiteral("Track installed package versions and get notified when updates are available. "
+                       "One-click apply — opens a terminal window for safe, supervised installation."),
         updatesBox);
     updatesDesc->setWordWrap(true);
     updatesDesc->setStyleSheet(QStringLiteral(
         "QLabel { color: %1; font-size: 13px; }").arg(Col::TextSecondary));
-    updatesLayout->addWidget(updatesDesc);
+    updHeaderRow->addWidget(updatesDesc, 1);
 
-    m_checkUpdatesButton = makeActionBtn(updatesBox, QStringLiteral("Check for Updates"),
-                                          QStringLiteral("update"),
-                                          QStringLiteral("Compare installed package versions with repositories"));
-    updatesLayout->addWidget(m_checkUpdatesButton, 0, Qt::AlignLeft);
+    m_updateCountBadge = new QLabel(updatesBox);
+    m_updateCountBadge->setFixedSize(28, 28);
+    m_updateCountBadge->setAlignment(Qt::AlignCenter);
+    m_updateCountBadge->setVisible(false);
+    m_updateCountBadge->setStyleSheet(QStringLiteral(
+        "QLabel { background: #ef4444; color: white; border-radius: 14px; "
+        "         font-weight: 700; font-size: 11px; }"));
+    updHeaderRow->addWidget(m_updateCountBadge);
+    updatesLayout->addLayout(updHeaderRow);
+
+    // Progress bar (hidden when idle, pulsing during check)
+    m_updateProgressBar = new QProgressBar(updatesBox);
+    m_updateProgressBar->setRange(0, 0);  // indeterminate
+    m_updateProgressBar->setFixedHeight(6);
+    m_updateProgressBar->setTextVisible(false);
+    m_updateProgressBar->setVisible(false);
+    m_updateProgressBar->setStyleSheet(QStringLiteral(
+        "QProgressBar { background: %1; border-radius: 3px; border: none; }"
+        "QProgressBar::chunk { background: %2; border-radius: 3px; }"
+    ).arg(Col::BgCard, Col::Accent));
+    updatesLayout->addWidget(m_updateProgressBar);
+
+    // Status label (last-checked + update count)
+    m_updateStatusLabel = new QLabel(QStringLiteral("Not checked yet."), updatesBox);
+    m_updateStatusLabel->setStyleSheet(
+        QStringLiteral("color: %1; font-size: 11px;").arg(Col::TextMuted));
+    updatesLayout->addWidget(m_updateStatusLabel);
+
+    // Action buttons row: Check | Apply Repo | Apply All | interval spinner
+    auto *updBtnRow = new QHBoxLayout;
+    updBtnRow->setSpacing(8);
+
+    m_checkUpdatesButton = makeActionBtn(updatesBox, QStringLiteral("🔍 Check Now"),
+                                         QStringLiteral("update"),
+                                         QStringLiteral("Compare installed package versions with repositories"));
+    updBtnRow->addWidget(m_checkUpdatesButton);
+
+    m_applyRepoButton = new QPushButton(QStringLiteral("⬆ Apply Repo Updates"), updatesBox);
+    m_applyRepoButton->setCursor(Qt::PointingHandCursor);
+    m_applyRepoButton->setEnabled(false);
+    m_applyRepoButton->setToolTip(QStringLiteral("Run: sudo pacman -Syu in a terminal window"));
+    m_applyRepoButton->setStyleSheet(QStringLiteral(
+        "QPushButton { background: %1; border: 1px solid %2; border-radius: 6px; "
+        "              color: %3; padding: 8px 14px; font-weight: 600; }"
+        "QPushButton:hover:enabled { background: %4; color: white; border-color: %4; }"
+        "QPushButton:disabled { color: %5; border-color: %6; }"
+    ).arg(Col::BgCard, Col::Accent, Col::Accent, Col::Accent, Col::TextMuted, Col::Border));
+    updBtnRow->addWidget(m_applyRepoButton);
+
+    m_applyAllButton = new QPushButton(QStringLiteral("🚀 Apply All (+ AUR)"), updatesBox);
+    m_applyAllButton->setCursor(Qt::PointingHandCursor);
+    m_applyAllButton->setEnabled(false);
+    m_applyAllButton->setVisible(false);  // shown only when AUR helper exists
+    m_applyAllButton->setToolTip(QStringLiteral("Run: paru/yay -Syu (repo + AUR) in a terminal window"));
+    m_applyAllButton->setStyleSheet(QStringLiteral(
+        "QPushButton { background: %1; border: 1px solid %2; border-radius: 6px; "
+        "              color: %3; padding: 8px 14px; font-weight: 600; }"
+        "QPushButton:hover:enabled { background: %4; color: white; border-color: %4; }"
+        "QPushButton:disabled { color: %5; border-color: %6; }"
+    ).arg(Col::BgCard, Col::AccentGlow, Col::AccentGlow, Col::AccentGlow, Col::TextMuted, Col::Border));
+    updBtnRow->addWidget(m_applyAllButton);
+
+    updBtnRow->addStretch(1);
+
+    // Auto-check interval spinner
+    auto *intervalLabel = new QLabel(QStringLiteral("Auto-check every"), updatesBox);
+    intervalLabel->setStyleSheet(QStringLiteral("color: %1; font-size: 12px;").arg(Col::TextMuted));
+    m_updateIntervalSpin = new QSpinBox(updatesBox);
+    m_updateIntervalSpin->setRange(5, 180);
+    m_updateIntervalSpin->setValue(30);
+    m_updateIntervalSpin->setSuffix(QStringLiteral(" min"));
+    m_updateIntervalSpin->setToolTip(QStringLiteral("Background check interval (minutes)"));
+    m_updateIntervalSpin->setStyleSheet(QStringLiteral(
+        "QSpinBox { background: %1; border: 1px solid %2; border-radius: 6px; "
+        "           color: %3; padding: 4px 8px; }"
+    ).arg(Col::BgCard, Col::Border, Col::TextPrimary));
+    updBtnRow->addWidget(intervalLabel);
+    updBtnRow->addWidget(m_updateIntervalSpin);
+    updatesLayout->addLayout(updBtnRow);
+
+    // Live output log (terminal-style, hidden until apply starts)
+    m_updateOutputLog = new QPlainTextEdit(updatesBox);
+    m_updateOutputLog->setReadOnly(true);
+    m_updateOutputLog->setFixedHeight(130);
+    m_updateOutputLog->setVisible(false);
+    m_updateOutputLog->setStyleSheet(QStringLiteral(
+        "QPlainTextEdit { background: #050810; color: #a3e635; border: 1px solid %1; "
+        "                 border-radius: 6px; font-family: monospace; font-size: 11px; padding: 6px; }"
+    ).arg(Col::Border));
+    updatesLayout->addWidget(m_updateOutputLog);
+
     layout->addWidget(updatesBox);
 
     layout->addStretch(1);
@@ -1460,30 +1551,47 @@ MainWindow::MainWindow(QWidget *parent)
                 m_diskCleanupButton->setEnabled(true);
                 appendMessage(QStringLiteral("Error"), error, Col::Danger);
             });
-    connect(m_checkUpdatesButton, &QPushButton::clicked, this, &MainWindow::onCheckUpdatesClicked);
+    connect(m_checkUpdatesButton, &QPushButton::clicked,   this, &MainWindow::onCheckUpdatesClicked);
+    connect(m_applyRepoButton,    &QPushButton::clicked,   this, &MainWindow::onApplyRepoUpdatesClicked);
+    connect(m_applyAllButton,     &QPushButton::clicked,   this, &MainWindow::onApplyAllUpdatesClicked);
 
-    // Update checker
+    // Update checker signals
     UpdateChecker &updateChecker = m_agent.updateChecker();
-    connect(&updateChecker, &UpdateChecker::checkStarted, this,
-            [this]() {
-                m_checkUpdatesButton->setEnabled(false);
-                navigateTo(1); // Switch to chat to show results
-                appendPlainLine(
-                    QStringLiteral("Checking installed packages against the repositories..."),
-                    Col::TextMuted);
+    connect(&updateChecker, &UpdateChecker::checkStarted,  this, [this]() {
+        m_checkUpdatesButton->setEnabled(false);
+        m_applyRepoButton->setEnabled(false);
+        m_applyAllButton->setEnabled(false);
+        m_updateProgressBar->setVisible(true);
+        m_updateStatusLabel->setText(QStringLiteral("Checking..."));
+        m_updateCountBadge->setVisible(false);
+    });
+    connect(&updateChecker, &UpdateChecker::checkProgress, this, &MainWindow::onUpdateCheckProgress);
+    connect(&updateChecker, &UpdateChecker::checkFinished, this, &MainWindow::onUpdateCheckFinished);
+    connect(&updateChecker, &UpdateChecker::checkError,    this, &MainWindow::onUpdateCheckError);
+    connect(&updateChecker, &UpdateChecker::updatesApplyStarted, this, &MainWindow::onUpdatesApplyStarted);
+    connect(&updateChecker, &UpdateChecker::updatesApplyOutput,  this, &MainWindow::onUpdatesApplyOutput);
+    connect(&updateChecker, &UpdateChecker::updatesApplyFinished,this, &MainWindow::onUpdatesApplyFinished);
+    connect(&updateChecker, &UpdateChecker::periodicCheckDone,   this, &MainWindow::onPeriodicUpdateCheckDone);
+
+    // Interval spinner changes restart periodic timer
+    connect(m_updateIntervalSpin, QOverload<int>::of(&QSpinBox::valueChanged), this,
+            [this](int minutes) {
+                m_agent.updateChecker().startPeriodicCheck(minutes);
             });
-    connect(&updateChecker, &UpdateChecker::checkFinished, this,
-            [this](int) {
-                m_checkUpdatesButton->setEnabled(true);
-                appendMessage(QStringLiteral("TitanAI"),
-                              m_agent.updateChecker().formatUpdateReport(),
-                              Col::AccentGlow);
-            });
-    connect(&updateChecker, &UpdateChecker::checkError, this,
-            [this](const QString &error) {
-                m_checkUpdatesButton->setEnabled(true);
-                appendMessage(QStringLiteral("Error"), error, Col::Danger);
-            });
+
+    // Setup system tray icon for popup notifications
+    if (QSystemTrayIcon::isSystemTrayAvailable()) {
+        m_trayIcon = new QSystemTrayIcon(this);
+        m_trayIcon->setIcon(QIcon::fromTheme(QStringLiteral("system-software-update"),
+                                             QIcon(QStringLiteral(":/icons/logo.png"))));
+        m_trayIcon->setToolTip(QStringLiteral("TitanAI"));
+        m_trayIcon->show();
+        connect(m_trayIcon, &QSystemTrayIcon::messageClicked, this, [this]() {
+            activateWindow();
+            raise();
+            navigateTo(2); // jump to Dev Hub
+        });
+    }
     connect(&m_agent, &Agent::autoFixEnabledChanged, this, [this](bool enabled) {
         m_settings.setValue(QStringLiteral("autoFixEnabled"), enabled);
         const QSignalBlocker blocker(m_autoFixCheck);
@@ -1605,6 +1713,10 @@ void MainWindow::onModelReady(const QString &model)
     m_agent.startLearning();
     m_agent.startCalendar();
     m_agent.calendarManager().setAutoRefresh(true);
+
+    // Start background update check (30 min interval)
+    m_agent.updateChecker().startPeriodicCheck(
+        m_updateIntervalSpin ? m_updateIntervalSpin->value() : 30);
 
     QTimer::singleShot(2000, this, [this]() {
         const QString suggestions = m_agent.getStartupSuggestions();
@@ -1772,9 +1884,143 @@ void MainWindow::onDiskCleanupClicked()
 void MainWindow::onCheckUpdatesClicked()
 {
     if (m_agent.updateChecker().isChecking()) {
+        m_updateStatusLabel->setText(QStringLiteral("Already checking, please wait..."));
         return;
     }
     m_agent.updateChecker().startCheck();
+}
+
+void MainWindow::onApplyRepoUpdatesClicked()
+{
+    if (m_agent.updateChecker().isApplying()) return;
+    m_updateOutputLog->clear();
+    m_agent.updateChecker().applyUpdates(false);
+}
+
+void MainWindow::onApplyAllUpdatesClicked()
+{
+    if (m_agent.updateChecker().isApplying()) return;
+    m_updateOutputLog->clear();
+    m_agent.updateChecker().applyUpdates(true);
+}
+
+void MainWindow::onUpdateCheckProgress(const QString &stage)
+{
+    if (m_updateStatusLabel)
+        m_updateStatusLabel->setText(stage);
+}
+
+void MainWindow::onUpdateCheckFinished(int count)
+{
+    m_updateProgressBar->setVisible(false);
+    m_checkUpdatesButton->setEnabled(true);
+
+    const QString lastChecked = QStringLiteral("Last checked: %1")
+        .arg(m_agent.updateChecker().lastCheckTimeString());
+
+    if (count == 0) {
+        m_updateStatusLabel->setText(
+            QStringLiteral("%1  |  ✅ All up to date").arg(lastChecked));
+        m_updateCountBadge->setVisible(false);
+        m_applyRepoButton->setEnabled(false);
+        m_applyAllButton->setEnabled(false);
+    } else {
+        m_updateStatusLabel->setText(
+            QStringLiteral("%1  |  %2 update(s) available").arg(lastChecked).arg(count));
+
+        // Red badge
+        m_updateCountBadge->setText(QString::number(qMin(count, 99)));
+        m_updateCountBadge->setVisible(true);
+
+        // Enable apply buttons
+        m_applyRepoButton->setEnabled(true);
+        if (m_agent.updateChecker().aurHelperAvailable()) {
+            m_applyAllButton->setEnabled(true);
+            m_applyAllButton->setVisible(true);
+        }
+
+        // Show in chat too
+        navigateTo(1);
+        appendMessage(QStringLiteral("TitanAI"),
+                      m_agent.updateChecker().formatUpdateReport(),
+                      Col::AccentGlow);
+    }
+}
+
+void MainWindow::onUpdateCheckError(const QString &error)
+{
+    m_updateProgressBar->setVisible(false);
+    m_checkUpdatesButton->setEnabled(true);
+    m_updateStatusLabel->setText(QStringLiteral("⚠️ Error: %1").arg(error));
+    appendMessage(QStringLiteral("Error"), error, Col::Danger);
+}
+
+void MainWindow::onUpdatesApplyStarted(const QString &command)
+{
+    m_applyRepoButton->setEnabled(false);
+    m_applyAllButton->setEnabled(false);
+    m_updateOutputLog->setVisible(true);
+    m_updateOutputLog->appendPlainText(
+        QStringLiteral("$ %1").arg(command));
+}
+
+void MainWindow::onUpdatesApplyOutput(const QString &line)
+{
+    if (m_updateOutputLog) {
+        m_updateOutputLog->appendPlainText(line);
+        // Auto-scroll to bottom
+        QScrollBar *sb = m_updateOutputLog->verticalScrollBar();
+        if (sb) sb->setValue(sb->maximum());
+    }
+}
+
+void MainWindow::onUpdatesApplyFinished(bool success)
+{
+    const int count = m_agent.updateChecker().pendingUpdates().size();
+    m_applyRepoButton->setEnabled(count > 0);
+    if (m_agent.updateChecker().aurHelperAvailable())
+        m_applyAllButton->setEnabled(count > 0);
+
+    const QString msg = success
+        ? QStringLiteral("✅ Updates applied successfully!")
+        : QStringLiteral("⚠️ Update process finished (check the terminal window for details).");
+    m_updateOutputLog->appendPlainText(msg);
+    appendMessage(QStringLiteral("TitanAI"), msg, success ? Col::AccentGlow : Col::Warning);
+
+    // Re-check to refresh the list
+    QTimer::singleShot(2000, this, [this]() {
+        m_agent.updateChecker().startCheck();
+    });
+}
+
+void MainWindow::onPeriodicUpdateCheckDone(int count)
+{
+    if (count <= 0) return; // Nothing to notify
+
+    // System tray popup notification
+    if (m_trayIcon && m_trayIcon->supportsMessages()) {
+        m_trayIcon->showMessage(
+            QStringLiteral("TitanAI – Updates Available 🔄"),
+            QStringLiteral("%1 package update(s) available. Click to view.").arg(count),
+            QSystemTrayIcon::Information,
+            8000  // show for 8 seconds
+        );
+    }
+
+    // Also update the badge without switching pages (user may be mid-task)
+    if (m_updateCountBadge) {
+        m_updateCountBadge->setText(QString::number(qMin(count, 99)));
+        m_updateCountBadge->setVisible(true);
+    }
+    if (m_updateStatusLabel) {
+        m_updateStatusLabel->setText(
+            QStringLiteral("Last checked: %1  |  %2 update(s) available")
+                .arg(m_agent.updateChecker().lastCheckTimeString())
+                .arg(count));
+    }
+    if (m_applyRepoButton) m_applyRepoButton->setEnabled(true);
+    if (m_applyAllButton && m_agent.updateChecker().aurHelperAvailable())
+        m_applyAllButton->setEnabled(true);
 }
 
 void MainWindow::startStreamingBlock()
