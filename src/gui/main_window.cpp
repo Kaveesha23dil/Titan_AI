@@ -26,6 +26,7 @@
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QSignalBlocker>
+#include <QSlider>
 #include <QStackedWidget>
 #include <QTextBrowser>
 #include <QTimer>
@@ -781,6 +782,129 @@ QWidget *MainWindow::createDevHubPage()
     perfNote->setStyleSheet(QStringLiteral("color: %1; font-size: 11px;").arg(Col::TextMuted));
     perfLayout->addWidget(perfNote);
     layout->addWidget(perfBox);
+
+    // ── 🔋 Power Management Card ────────────────────────────
+    auto *powerBox = new QGroupBox(QStringLiteral("🔋  Power Management"), content);
+    auto *powerLayout = new QVBoxLayout(powerBox);
+    powerLayout->setSpacing(10);
+
+    // Battery level bar + status label row
+    auto *batTopRow = new QHBoxLayout;
+
+    m_batteryLabel = new QLabel(QStringLiteral("Battery: –"), powerBox);
+    m_batteryLabel->setStyleSheet(
+        QStringLiteral("color: %1; font-weight: 600; font-size: 13px;").arg(Col::TextPrimary));
+    batTopRow->addWidget(m_batteryLabel);
+    batTopRow->addStretch();
+
+    m_powerStatusLabel = new QLabel(QStringLiteral("⚡ Initialising..."), powerBox);
+    m_powerStatusLabel->setStyleSheet(
+        QStringLiteral("color: %1; font-size: 12px;").arg(Col::TextMuted));
+    batTopRow->addWidget(m_powerStatusLabel);
+    powerLayout->addLayout(batTopRow);
+
+    m_batteryBar = new QProgressBar(powerBox);
+    m_batteryBar->setRange(0, 100);
+    m_batteryBar->setValue(0);
+    m_batteryBar->setTextVisible(false);
+    m_batteryBar->setFixedHeight(10);
+    m_batteryBar->setStyleSheet(QStringLiteral(
+        "QProgressBar { background: %1; border-radius: 5px; border: none; }"
+        "QProgressBar::chunk { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,"
+        "  stop:0 %2, stop:0.5 %3, stop:1 %4); border-radius: 5px; }"
+    ).arg(Col::BgCard, Col::Danger, Col::Warning, Col::AccentGlow));
+    powerLayout->addWidget(m_batteryBar);
+
+    // Profile selector row
+    auto *profileRow = new QHBoxLayout;
+    auto *profileLabel = new QLabel(QStringLiteral("Power Profile:"), powerBox);
+    profileLabel->setFixedWidth(110);
+    profileLabel->setStyleSheet(QStringLiteral("color: %1;").arg(Col::TextSecondary));
+
+    m_powerProfileCombo = new QComboBox(powerBox);
+    m_powerProfileCombo->addItem(QStringLiteral("🤖 Smart Auto"),   static_cast<int>(PowerProfile::SmartAuto));
+    m_powerProfileCombo->addItem(QStringLiteral("⚡ Performance"),   static_cast<int>(PowerProfile::Performance));
+    m_powerProfileCombo->addItem(QStringLiteral("⚖️  Balanced"),     static_cast<int>(PowerProfile::Balanced));
+    m_powerProfileCombo->addItem(QStringLiteral("🌿 Power Saver"),   static_cast<int>(PowerProfile::PowerSaver));
+    m_powerProfileCombo->setCurrentIndex(0);  // SmartAuto by default
+    m_powerProfileCombo->setStyleSheet(QStringLiteral(
+        "QComboBox { background: %1; border: 1px solid %2; border-radius: 6px; "
+        "            color: %3; padding: 6px 12px; } "
+        "QComboBox::drop-down { border: none; } "
+        "QComboBox QAbstractItemView { background: %1; color: %3; selection-background-color: %4; }"
+    ).arg(Col::BgCard, Col::Border, Col::TextPrimary, Col::Accent));
+    connect(m_powerProfileCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &MainWindow::onPowerProfileChanged);
+
+    profileRow->addWidget(profileLabel);
+    profileRow->addWidget(m_powerProfileCombo, 1);
+    powerLayout->addLayout(profileRow);
+
+    // Brightness slider row
+    auto *brightRow = new QHBoxLayout;
+    auto *brightLabel = new QLabel(QStringLiteral("Brightness:"), powerBox);
+    brightLabel->setFixedWidth(110);
+    brightLabel->setStyleSheet(QStringLiteral("color: %1;").arg(Col::TextSecondary));
+
+    m_brightnessSlider = new QSlider(Qt::Horizontal, powerBox);
+    m_brightnessSlider->setRange(5, 100);
+    m_brightnessSlider->setValue(m_agent.powerManager().currentBrightness() > 0
+                                 ? m_agent.powerManager().currentBrightness() : 80);
+    m_brightnessSlider->setStyleSheet(QStringLiteral(
+        "QSlider::groove:horizontal { background: %1; height: 6px; border-radius: 3px; }"
+        "QSlider::handle:horizontal { background: %2; width: 16px; height: 16px; "
+        "  margin: -5px 0; border-radius: 8px; }"
+        "QSlider::sub-page:horizontal { background: %3; border-radius: 3px; }"
+    ).arg(Col::BgCard, Col::AccentGlow, Col::Accent));
+    connect(m_brightnessSlider, &QSlider::valueChanged,
+            this, &MainWindow::onBrightnessSliderChanged);
+
+    m_brightnessValueLabel = new QLabel(
+        QStringLiteral("%1%").arg(m_brightnessSlider->value()), powerBox);
+    m_brightnessValueLabel->setFixedWidth(36);
+    m_brightnessValueLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    m_brightnessValueLabel->setStyleSheet(
+        QStringLiteral("color: %1; font-weight: 600;").arg(Col::TextPrimary));
+
+    brightRow->addWidget(brightLabel);
+    brightRow->addWidget(m_brightnessSlider, 1);
+    brightRow->addWidget(m_brightnessValueLabel);
+    powerLayout->addLayout(brightRow);
+
+    // Free AI RAM button (reuse from perf card concept)
+    auto *powerNote = new QLabel(
+        QStringLiteral("Smart Auto adapts power profile based on battery level and current activity."),
+        powerBox);
+    powerNote->setWordWrap(true);
+    powerNote->setStyleSheet(QStringLiteral("color: %1; font-size: 11px;").arg(Col::TextMuted));
+    powerLayout->addWidget(powerNote);
+
+    layout->addWidget(powerBox);
+
+    // Connect PowerManager signals → GUI updates
+    connect(&m_agent.powerManager(), &PowerManager::batteryInfoUpdated,
+            this, &MainWindow::onBatteryInfoUpdated);
+    connect(&m_agent.powerManager(), &PowerManager::lowBatteryWarning,
+            this, &MainWindow::onLowBatteryWarning);
+    connect(&m_agent.powerManager(), &PowerManager::criticalBatteryWarning,
+            this, &MainWindow::onCriticalBatteryWarning);
+    connect(&m_agent.powerManager(), &PowerManager::profileChanged,
+            this, [this](PowerProfile p) {
+                const int idx = m_powerProfileCombo->findData(static_cast<int>(p));
+                if (idx >= 0) m_powerProfileCombo->setCurrentIndex(idx);
+            });
+    connect(&m_agent.powerManager(), &PowerManager::brightnessChanged,
+            this, [this](int pct) {
+                m_brightnessSlider->blockSignals(true);
+                m_brightnessSlider->setValue(pct);
+                m_brightnessSlider->blockSignals(false);
+                m_brightnessValueLabel->setText(QStringLiteral("%1%").arg(pct));
+            });
+
+    // Initial battery info fill
+    QTimer::singleShot(500, this, [this]() {
+        onBatteryInfoUpdated(m_agent.powerManager().batteryInfo());
+    });
 
     // ── ① Auto-Fix Code Errors ──────────────────────────────
     auto *fixerBox = new QGroupBox(QStringLiteral("🔧  Auto-Fix Code Errors"), content);
@@ -2122,4 +2246,96 @@ void MainWindow::closeEvent(QCloseEvent *event)
 {
     m_agent.unloadModel(); // Immediately evict model weights from RAM on exit
     QMainWindow::closeEvent(event);
+}
+
+// ---------------------------------------------------------------------------
+// Power Management slots
+// ---------------------------------------------------------------------------
+
+void MainWindow::onPowerProfileChanged(int index)
+{
+    if (!m_powerProfileCombo) return;
+    const auto profile = static_cast<PowerProfile>(
+        m_powerProfileCombo->itemData(index).toInt());
+    m_agent.applyPowerProfile(profile);
+}
+
+void MainWindow::onBrightnessSliderChanged(int value)
+{
+    if (m_brightnessValueLabel)
+        m_brightnessValueLabel->setText(QStringLiteral("%1%").arg(value));
+    m_agent.powerManager().setBrightness(value);
+}
+
+void MainWindow::onFreeAiRamClicked()
+{
+    m_agent.unloadModel();
+}
+
+void MainWindow::onBatteryInfoUpdated(const BatteryInfo &info)
+{
+    if (!m_batteryBar || !m_batteryLabel || !m_powerStatusLabel) return;
+
+    if (!info.present) {
+        m_batteryLabel->setText(QStringLiteral("Battery: N/A (Desktop)"));
+        m_batteryBar->setValue(100);
+        m_powerStatusLabel->setText(QStringLiteral("⚡ AC Power"));
+        return;
+    }
+
+    // Update level bar
+    const int pct = qBound(0, info.percent, 100);
+    m_batteryBar->setValue(pct);
+
+    // Label: percentage + AC indicator
+    QString label = QStringLiteral("Battery: %1%").arg(pct);
+    if (info.acOnline)  label += QStringLiteral(" ⚡");
+    m_batteryLabel->setText(label);
+
+    // Status label with power draw
+    QString status = info.statusText;
+    if (info.powerNowMw > 0 && !info.acOnline)
+        status += QStringLiteral(" (%1 mW)").arg(info.powerNowMw);
+    m_powerStatusLabel->setText(status);
+
+    // Colour-code the bar: green > 50, orange 20-50, red <= 20
+    QString chunkColor;
+    if (pct > 50 || info.acOnline)      chunkColor = QStringLiteral("#22c55e");  // green
+    else if (pct > 20)                  chunkColor = QStringLiteral("#f59e0b");  // amber
+    else                                chunkColor = QStringLiteral("#ef4444");  // red
+
+    m_batteryBar->setStyleSheet(QStringLiteral(
+        "QProgressBar { background: #111827; border-radius: 5px; border: none; }"
+        "QProgressBar::chunk { background: %1; border-radius: 5px; }"
+    ).arg(chunkColor));
+}
+
+void MainWindow::onLowBatteryWarning(int percent)
+{
+    appendMessage(
+        QStringLiteral("TitanAI"),
+        QStringLiteral("⚠️ Low battery: %1%% remaining. Switching to Power Saver profile.")
+            .arg(percent),
+        QStringLiteral("#f59e0b"));
+    // Auto-switch to Power Saver
+    if (m_powerProfileCombo) {
+        const int idx = m_powerProfileCombo->findData(
+            static_cast<int>(PowerProfile::PowerSaver));
+        if (idx >= 0) m_powerProfileCombo->setCurrentIndex(idx);
+    }
+}
+
+void MainWindow::onCriticalBatteryWarning(int percent)
+{
+    appendMessage(
+        QStringLiteral("TitanAI"),
+        QStringLiteral("🔴 Critical battery: %1%% remaining! Please plug in your charger.")
+            .arg(percent),
+        QStringLiteral("#ef4444"));
+    // Force Power Saver
+    if (m_powerProfileCombo) {
+        const int idx = m_powerProfileCombo->findData(
+            static_cast<int>(PowerProfile::PowerSaver));
+        if (idx >= 0) m_powerProfileCombo->setCurrentIndex(idx);
+    }
 }

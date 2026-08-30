@@ -96,6 +96,10 @@ void Agent::sendMessage(const QString &message)
         return;
     }
 
+    if (handlePowerQuery(message)) {
+        return;
+    }
+
     m_ollamaClient.sendPrompt(message);
 }
 
@@ -1416,4 +1420,95 @@ void Agent::developUi(const QImage &designImage,
         emit uiDevelopmentProgress(QStringLiteral("Sending requirements to AI model..."));
         m_ollamaClient.requestCompletion(prompt);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Power Management
+// ---------------------------------------------------------------------------
+
+PowerManager &Agent::powerManager()
+{
+    return m_powerManager;
+}
+
+void Agent::applyPowerProfile(PowerProfile profile)
+{
+    m_powerManager.setProfile(profile);
+    const QString name = m_powerManager.profileName(profile);
+    emit powerProfileApplied(name);
+    emit responseReceived(QStringLiteral("✅ Power profile set to **%1**. LLM will use %2 threads, %3-token context.")
+        .arg(name)
+        .arg(m_powerManager.recommendedThreads())
+        .arg(m_powerManager.recommendedContext()));
+}
+
+bool Agent::handlePowerQuery(const QString &message)
+{
+    const QString lower = message.toLower().trimmed();
+
+    // Battery / power status queries
+    const bool wantsBattery = lower.contains(QLatin1String("battery")) ||
+                              lower.contains(QLatin1String("power status")) ||
+                              lower.contains(QLatin1String("power report")) ||
+                              lower.contains(QLatin1String("charging")) ||
+                              lower.contains(QLatin1String("power level"));
+
+    if (wantsBattery) {
+        m_powerManager.refreshBatteryInfo();
+        const QString report = m_powerManager.generateReport();
+        emit powerReportReady(report);
+        emit responseReceived(report);
+        return true;
+    }
+
+    // Profile switching
+    const bool wantsPerf = lower.contains(QLatin1String("performance mode")) ||
+                           lower.contains(QLatin1String("performance profile")) ||
+                           lower.contains(QLatin1String("enable performance"));
+    if (wantsPerf) {
+        applyPowerProfile(PowerProfile::Performance);
+        return true;
+    }
+
+    const bool wantsSaver = lower.contains(QLatin1String("power saver")) ||
+                            lower.contains(QLatin1String("powersaver")) ||
+                            lower.contains(QLatin1String("save power")) ||
+                            lower.contains(QLatin1String("battery saver"));
+    if (wantsSaver) {
+        applyPowerProfile(PowerProfile::PowerSaver);
+        return true;
+    }
+
+    const bool wantsBalanced = lower.contains(QLatin1String("balanced mode")) ||
+                               lower.contains(QLatin1String("balanced profile"));
+    if (wantsBalanced) {
+        applyPowerProfile(PowerProfile::Balanced);
+        return true;
+    }
+
+    const bool wantsAuto = lower.contains(QLatin1String("smart auto")) ||
+                           lower.contains(QLatin1String("auto power")) ||
+                           lower.contains(QLatin1String("auto profile"));
+    if (wantsAuto) {
+        applyPowerProfile(PowerProfile::SmartAuto);
+        return true;
+    }
+
+    // Brightness control: "set brightness 70" / "brightness 50%"
+    const QRegularExpression brightRe(
+        QStringLiteral(R"((?:set\s+)?brightness\s+(\d+)\s*%?)"),
+        QRegularExpression::CaseInsensitiveOption);
+    const auto brightMatch = brightRe.match(lower);
+    if (brightMatch.hasMatch()) {
+        const int pct = qBound(5, brightMatch.captured(1).toInt(), 100);
+        const bool ok = m_powerManager.setBrightness(pct);
+        if (ok) {
+            emit responseReceived(QStringLiteral("💡 Screen brightness set to **%1%**.").arg(pct));
+        } else {
+            emit responseReceived(QStringLiteral("⚠️ Could not set brightness (brightnessctl not found or permission denied)."));
+        }
+        return true;
+    }
+
+    return false;
 }

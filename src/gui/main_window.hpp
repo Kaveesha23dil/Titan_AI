@@ -16,6 +16,7 @@ class QCheckBox;
  class QProgressBar;
  class QPushButton;
  class QScrollArea;
+ class QSlider;
  class QStackedWidget;
  class QTextBrowser;
  class QVBoxLayout;
@@ -62,6 +63,14 @@ private slots:
     void onCalendarNotificationAlert(const QString &title, const QString &message);
     void onOpenCalendarSettings();
     void onModelChanged(int index);
+
+    // Power Management slots
+    void onPowerProfileChanged(int index);
+    void onBrightnessSliderChanged(int value);
+    void onFreeAiRamClicked();
+    void onBatteryInfoUpdated(const BatteryInfo &info);
+    void onLowBatteryWarning(int percent);
+    void onCriticalBatteryWarning(int percent);
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -163,6 +172,14 @@ private:
     // --- Voice Settings button (kept for dialog access) ---
     QPushButton *m_voiceSettingsButton{nullptr};
     QPushButton *m_calendarButton{nullptr};
+
+    // --- Power Management widgets ---
+    QProgressBar *m_batteryBar{nullptr};
+    QLabel       *m_batteryLabel{nullptr};
+    QLabel       *m_powerStatusLabel{nullptr};
+    QComboBox    *m_powerProfileCombo{nullptr};
+    QSlider      *m_brightnessSlider{nullptr};
+    QLabel       *m_brightnessValueLabel{nullptr};
 };
 
 #endif // TITANAI_MAIN_WINDOW_HPP
