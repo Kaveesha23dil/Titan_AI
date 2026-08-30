@@ -11,6 +11,7 @@
 #include "tools/code_fixer.hpp"
 #include "tools/system_info.hpp"
 #include "tools/ui_developer.hpp"
+#include "tools/update_checker.hpp"
 #include "learning/task_tracker.hpp"
 #include "learning/activity_analyzer.hpp"
 #include "learning/suggestion_engine.hpp"
@@ -232,6 +233,36 @@ private slots:
         QVERIFY(report.contains(QStringLiteral("LLM Recommendations")));
         std::cout << "[PASS] PowerManager report generation, length="
                   << report.length() << std::endl;
+    }
+
+    void testUpdateCheckerStructure() {
+        UpdateChecker uc;
+        // Verify initial state
+        QVERIFY(!uc.isChecking());
+        QVERIFY(!uc.isApplying());
+        QVERIFY(!uc.isPeriodicCheckActive());
+        QVERIFY(!uc.lastCheckTime().isValid());
+        QCOMPARE(uc.lastCheckTimeString(), QStringLiteral("Never"));
+        QCOMPARE(uc.installedPackageCount(), 0);
+        QVERIFY(uc.pendingUpdates().isEmpty());
+        // Periodic check control
+        uc.startPeriodicCheck(60);
+        QVERIFY(uc.isPeriodicCheckActive());
+        uc.stopPeriodicCheck();
+        QVERIFY(!uc.isPeriodicCheckActive());
+        std::cout << "[PASS] UpdateChecker structure and periodic check API" << std::endl;
+    }
+
+    void testUpdateCheckerReport() {
+        UpdateChecker uc;
+        // Empty state report
+        const QString emptyReport = uc.formatUpdateReport();
+        QVERIFY(!emptyReport.isEmpty());
+        // Once installed list is empty the report should indicate 0 installed
+        QVERIFY(emptyReport.contains(QStringLiteral("Installed packages: 0")));
+        QVERIFY(emptyReport.contains(QStringLiteral("up to date")) ||
+                emptyReport.contains(QStringLiteral("packages: 0")));
+        std::cout << "[PASS] UpdateChecker empty report: " << emptyReport.left(60).toStdString() << std::endl;
     }
 };
 

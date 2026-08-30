@@ -4,6 +4,7 @@
 #include <QMainWindow>
 #include <QSettings>
 #include <QImage>
+#include <QSystemTrayIcon>
 
 #include "agent/agent.hpp"
 #include "voice/voice_engine.hpp"
@@ -17,6 +18,7 @@ class QCheckBox;
  class QPushButton;
  class QScrollArea;
  class QSlider;
+ class QSpinBox;
  class QStackedWidget;
  class QTextBrowser;
  class QVBoxLayout;
@@ -42,7 +44,6 @@ private slots:
     void onBuildAndFixClicked();
     void onOrganizeClicked();
     void onDiskCleanupClicked();
-    void onCheckUpdatesClicked();
 
     void onUiDevelopmentProgress(const QString &message);
     void onUiDevelopmentFinished(bool success, const QString &summary, const QString &branchName);
@@ -71,6 +72,18 @@ private slots:
     void onBatteryInfoUpdated(const BatteryInfo &info);
     void onLowBatteryWarning(int percent);
     void onCriticalBatteryWarning(int percent);
+
+    // Enhanced Update Checker slots
+    void onCheckUpdatesClicked();
+    void onApplyRepoUpdatesClicked();
+    void onApplyAllUpdatesClicked();
+    void onUpdateCheckProgress(const QString &stage);
+    void onUpdateCheckFinished(int count);
+    void onUpdateCheckError(const QString &error);
+    void onUpdatesApplyStarted(const QString &command);
+    void onUpdatesApplyOutput(const QString &line);
+    void onUpdatesApplyFinished(bool success);
+    void onPeriodicUpdateCheckDone(int count);
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -110,6 +123,7 @@ private:
     bool m_modelReady{false};
     bool m_streamActive{false};
     bool m_streamBlockStarted{false};
+    QSystemTrayIcon *m_trayIcon{nullptr};
 
     // --- Navigation & Pages ---
     QStackedWidget *m_pageStack{nullptr};
@@ -180,6 +194,15 @@ private:
     QComboBox    *m_powerProfileCombo{nullptr};
     QSlider      *m_brightnessSlider{nullptr};
     QLabel       *m_brightnessValueLabel{nullptr};
+
+    // --- Enhanced Update Checker widgets ---
+    QProgressBar  *m_updateProgressBar{nullptr};
+    QLabel        *m_updateStatusLabel{nullptr};
+    QLabel        *m_updateCountBadge{nullptr};
+    QPushButton   *m_applyRepoButton{nullptr};
+    QPushButton   *m_applyAllButton{nullptr};
+    QPlainTextEdit*m_updateOutputLog{nullptr};
+    QSpinBox      *m_updateIntervalSpin{nullptr};
 };
 
 #endif // TITANAI_MAIN_WINDOW_HPP
