@@ -19,6 +19,7 @@
 #include "learning/suggestion_engine.hpp"
 #include "calendar/calendar_manager.hpp"
 #include "calendar/notification_manager.hpp"
+#include "power/power_manager.hpp"
 
 class Agent : public QObject {
     Q_OBJECT
@@ -56,6 +57,10 @@ public:
     [[nodiscard]] DiskCleanup &diskCleanup();
     [[nodiscard]] UpdateChecker &updateChecker();
 
+    // Power Management
+    [[nodiscard]] PowerManager &powerManager();
+    void applyPowerProfile(PowerProfile profile);
+
     // UI Design-to-Code & Development controls
     void setCodeDevelopmentEnabled(bool enabled);
     [[nodiscard]] bool isCodeDevelopmentEnabled() const;
@@ -82,6 +87,8 @@ signals:
     void startupSuggestionsReady(const QString &suggestions);
     void calendarEventsReady(const QString &eventsSummary);
     void calendarNotificationAlert(const QString &title, const QString &message);
+    void powerReportReady(const QString &report);
+    void powerProfileApplied(const QString &profileName);
 
     // UI Developer signals
     void uiDevelopmentProgress(const QString &message);
@@ -105,6 +112,7 @@ private:
     bool handleAutoFixToggleQuery(const QString &message);
     bool handleCodeFixRequestQuery(const QString &message);
     bool handleUiDevelopmentQuery(const QString &message, const QImage &image = QImage());
+    bool handlePowerQuery(const QString &message);
     void startPasteFix(const QString &message);
     void startBuildFix();
     void requestFix(const QList<CodeFixer::BuildError> &errors);
@@ -130,6 +138,7 @@ private:
     DiskCleanup m_diskCleanup;
     UpdateChecker m_updateChecker;
     UiDeveloper m_uiDeveloper;
+    PowerManager m_powerManager;
     bool m_codeDevelopmentEnabled{false};
     bool m_autoFixEnabled{false};
     bool m_codeFixInProgress{false};

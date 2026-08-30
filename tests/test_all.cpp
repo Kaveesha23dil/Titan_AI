@@ -14,6 +14,7 @@
 #include "learning/task_tracker.hpp"
 #include "learning/activity_analyzer.hpp"
 #include "learning/suggestion_engine.hpp"
+#include "power/power_manager.hpp"
 
 class TitanAiTestSuite : public QObject {
     Q_OBJECT
@@ -190,6 +191,47 @@ private slots:
         QVERIFY2(errorMsg.isEmpty(), errorMsg.toUtf8().constData());
         QVERIFY2(received, "Timed out waiting for completion response");
         std::cout << "[PASS] Non-streaming Response: " << receivedResponse.left(80).toStdString() << std::endl;
+    }
+
+    void testPowerManagerBatteryRead() {
+        PowerManager pm;
+        pm.refreshBatteryInfo();
+        const BatteryInfo info = pm.batteryInfo();
+        // On any system the call should not crash; percent is either valid or -1
+        QVERIFY(info.percent >= -1 && info.percent <= 100);
+        std::cout << "[PASS] PowerManager battery read: "
+                  << info.percent << "%, AC=" << info.acOnline
+                  << ", status=" << info.statusText.toStdString() << std::endl;
+    }
+
+    void testPowerManagerProfileSwitch() {
+        PowerManager pm;
+        pm.setProfile(PowerProfile::Performance);
+        QCOMPARE(pm.currentProfile(), PowerProfile::Performance);
+        QCOMPARE(pm.recommendedThreads(), 8);
+        QCOMPARE(pm.recommendedContext(),  4096);
+
+        pm.setProfile(PowerProfile::PowerSaver);
+        QCOMPARE(pm.currentProfile(), PowerProfile::PowerSaver);
+        QCOMPARE(pm.recommendedThreads(), 2);
+        QCOMPARE(pm.recommendedContext(),  512);
+
+        pm.setProfile(PowerProfile::Balanced);
+        QCOMPARE(pm.currentProfile(), PowerProfile::Balanced);
+        QCOMPARE(pm.recommendedThreads(), 4);
+        QCOMPARE(pm.recommendedContext(),  1536);
+        std::cout << "[PASS] PowerManager profile switching" << std::endl;
+    }
+
+    void testPowerManagerReport() {
+        PowerManager pm;
+        pm.refreshBatteryInfo();
+        const QString report = pm.generateReport();
+        QVERIFY(!report.isEmpty());
+        QVERIFY(report.contains(QStringLiteral("Power Management Report")));
+        QVERIFY(report.contains(QStringLiteral("LLM Recommendations")));
+        std::cout << "[PASS] PowerManager report generation, length="
+                  << report.length() << std::endl;
     }
 };
 
