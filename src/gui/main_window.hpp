@@ -40,6 +40,7 @@ private slots:
     void onModelError(const QString &error);
     void onInstallRequested(const QStringList &packages);
     void onToolOutput(const QString &line);
+    void onModelNegotiation(const QString &message);
     void onBrowseProject();
     void onBuildAndFixClicked();
     void onOrganizeClicked();

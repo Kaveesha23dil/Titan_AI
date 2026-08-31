@@ -1672,6 +1672,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(&m_agent, &Agent::modelReady, this, &MainWindow::onModelReady);
     connect(&m_agent, &Agent::modelError, this, &MainWindow::onModelError);
     connect(&m_agent, &Agent::modelsChanged, this, &MainWindow::onModelsChanged);
+    connect(&m_agent, &Agent::modelNegotiation, this, &MainWindow::onModelNegotiation);
 
     // Restore settings
     m_projectDirectory = m_settings.value(QStringLiteral("projectDir")).toString();
@@ -2037,6 +2038,18 @@ void MainWindow::onToolOutput(const QString &line)
         navigateTo(1);
     }
     appendPlainLine(line, Col::TextMuted);
+}
+
+void MainWindow::onModelNegotiation(const QString &message)
+{
+    // Surface memory-based model recommendations without forcing a navigation,
+    // so a background suggestion never yanks the user away from what they are
+    // doing. Keep the status bar in sync as well.
+    if (m_statusLabel) {
+        m_statusLabel->setText(message);
+    }
+    const bool isWarning = message.startsWith(QLatin1String("⚠"));
+    appendPlainLine(message, isWarning ? Col::Warning : Col::Success);
 }
 
 void MainWindow::onBrowseProject()
