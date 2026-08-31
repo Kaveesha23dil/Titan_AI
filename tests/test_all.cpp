@@ -8,6 +8,7 @@
 #include "agent/agent.hpp"
 #include "llm/ollama_client.hpp"
 #include "llm/ollama_manager.hpp"
+#include "llm/model_memory_advisor.hpp"
 #include "tools/code_fixer.hpp"
 #include "tools/system_info.hpp"
 #include "tools/ui_developer.hpp"
@@ -30,6 +31,51 @@ private slots:
         QVERIFY(info.totalMemoryBytes > 0);
         std::cout << "[PASS] SystemInfo: " << info.operatingSystem.toStdString()
                   << ", CPU cores: " << info.cpuCoreCount << std::endl;
+    }
+
+    void testModelMemoryAdvisor() {
+        auto GB = [](double g) { return static_cast<quint64>(g * 1024.0 * 1024.0 * 1024.0); };
+
+        // Known-size footprint estimates are monotonic in parameter count.
+        const quint64 fp3b = ModelMemoryAdvisor::estimatedFootprintBytes(QStringLiteral("qwen2.5-coder:3b"));
+        const quint64 fp14b = ModelMemoryAdvisor::estimatedFootprintBytes(QStringLiteral("qwen2.5-coder:14b"));
+        QVERIFY(fp3b > 0);
+        QVERIFY(fp14b > fp3b);
+        QVERIFY(ModelMemoryAdvisor::estimatedFootprintBytes(QStringLiteral("gemma3:4b")) > 0);
+        QVERIFY(ModelMemoryAdvisor::estimatedFootprintBytes(QStringLiteral("cog:qwen2.5-coder:14b-q4_K_M")) == fp14b);
+
+        // Unknown-size tags (no "<n>b" pattern) are treated as size 0 / assume OK.
+        QCOMPARE(ModelMemoryAdvisor::estimatedFootprintBytes(QStringLiteral("llama3")), quint64(0));
+
+        // fitsInMemory: large model does not fit in small RAM; small one does;
+        // unknown-size always assumed to fit.
+        QVERIFY(ModelMemoryAdvisor::fitsInMemory(QStringLiteral("qwen2.5-coder:14b"), GB(20)));
+        QVERIFY(!ModelMemoryAdvisor::fitsInMemory(QStringLiteral("qwen2.5-coder:14b"), GB(6)));
+        QVERIFY(ModelMemoryAdvisor::fitsInMemory(QStringLiteral("llama3"), GB(1)));
+
+        // recommendBest returns the largest installed model that fits.
+        const QStringList installed{
+            QStringLiteral("qwen2.5-coder:0.5b"),
+            QStringLiteral("qwen2.5-coder:3b"),
+            QStringLiteral("qwen2.5-coder:14b"),
+        };
+        QCOMPARE(ModelMemoryAdvisor::recommendBest(installed, GB(20)), QStringLiteral("qwen2.5-coder:14b"));
+        QCOMPARE(ModelMemoryAdvisor::recommendBest(installed, GB(12)), QStringLiteral("qwen2.5-coder:3b"));
+
+        // recommendBest returns empty when nothing fits.
+        QVERIFY(ModelMemoryAdvisor::recommendBest(installed, GB(1)).isEmpty());
+
+        // suggestDownscale: current 14b no longer fits -> suggest 3b (largest smaller that fits).
+        QCOMPARE(ModelMemoryAdvisor::suggestDownscale(installed, GB(6), QStringLiteral("qwen2.5-coder:14b")),
+                 QStringLiteral("qwen2.5-coder:3b"));
+
+        // suggestDownscale returns empty when current fits.
+        QVERIFY(ModelMemoryAdvisor::suggestDownscale(installed, GB(20), QStringLiteral("qwen2.5-coder:14b")).isEmpty());
+
+        // suggestDownscale returns empty when current size is unknown.
+        QVERIFY(ModelMemoryAdvisor::suggestDownscale(installed, GB(1), QStringLiteral("llama3")).isEmpty());
+
+        std::cout << "[PASS] ModelMemoryAdvisor: sizes/fits/recommend/downscale semantics" << std::endl;
     }
 
     void testCodeFixerParsing() {

@@ -43,6 +43,11 @@ Agent::Agent(QObject *parent)
     // UI Developer
     connect(&m_uiDeveloper, &UiDeveloper::progress, this, &Agent::uiDevelopmentProgress);
     connect(&m_uiDeveloper, &UiDeveloper::finished, this, &Agent::uiDevelopmentFinished);
+
+    // Periodically re-evaluate whether the active model still fits in RAM and
+    // switch/suggest accordingly. The timer is started once a model is ready.
+    m_memoryCheckTimer.setInterval(60 * 1000);
+    connect(&m_memoryCheckTimer, &QTimer::timeout, this, &Agent::negotiateModels);
 }
 
 void Agent::initializeModel(const QString &model)
@@ -55,6 +60,14 @@ void Agent::onModelReady(const QString &model)
     m_ollamaClient.setModel(model);
     m_ollamaClient.warmUp();
     emit modelReady(model);
+
+    // (Re)enable the memory-negotiation poll now that a model is loaded, and
+    // invalidate any cached upgrade suggestion so it can be offered again.
+    if (!m_memoryCheckTimer.isActive()) {
+        m_memoryCheckTimer.start();
+    }
+    m_lastUpgradeSuggested = QString();
+    negotiateModels();
 }
 
 void Agent::sendMessage(const QString &message)
@@ -188,6 +201,57 @@ QString Agent::currentModel() const
 void Agent::unloadModel()
 {
     m_ollamaClient.unloadModel();
+}
+
+void Agent::negotiateModels()
+{
+    const SystemInfo info = m_systemInfoTool.getSystemInfo();
+    const quint64 available = info.availableMemoryBytes;
+    const QStringList installed = m_ollamaManager.installedModels();
+    const QString current = m_ollamaClient.model();
+    if (installed.isEmpty() || current.isEmpty()) {
+        return;
+    }
+
+    auto humanBytes = [](quint64 bytes) -> QString {
+        const double gb = static_cast<double>(bytes) / (1024.0 * 1024.0 * 1024.0);
+        return QStringLiteral("%1 GB").arg(QString::number(gb, 'f', 1));
+    };
+
+    // 1) Critical: the active model no longer fits in the available RAM.
+    //    Auto-downscale to the largest smaller installed model that does fit.
+    if (!ModelMemoryAdvisor::fitsInMemory(current, available)) {
+        const QString down = ModelMemoryAdvisor::suggestDownscale(installed, available, current);
+        if (!down.isEmpty()) {
+            emit modelNegotiation(
+                QStringLiteral("⚠️ Low system memory (%1 free). The active model '%2' (~%3) no longer fits "
+                               "comfortably, so I'm switching to '%4' (~%5) to keep things responsive.")
+                    .arg(humanBytes(available), current, ModelMemoryAdvisor::footprintDisplay(current),
+                         down, ModelMemoryAdvisor::footprintDisplay(down)));
+            switchModel(down);
+        } else {
+            emit modelNegotiation(
+                QStringLiteral("⚠️ Low system memory (%1 free) and the active model '%2' (~%3) may not fit well. "
+                               "Install a smaller model or close memory-heavy applications.")
+                    .arg(humanBytes(available), current, ModelMemoryAdvisor::footprintDisplay(current)));
+        }
+        return;
+    }
+
+    // 2) Upgrade opportunity: a larger installed model now fits in RAM and is
+    //    more capable than the current one. Only surface each target once so we
+    //    do not nag on every poll if the user chooses to stay on the current one.
+    const QString best = ModelMemoryAdvisor::recommendBest(installed, available);
+    const quint64 bestFootprint = ModelMemoryAdvisor::estimatedFootprintBytes(best);
+    const quint64 currentFootprint = ModelMemoryAdvisor::estimatedFootprintBytes(current);
+    if (!best.isEmpty() && best != current && bestFootprint > currentFootprint &&
+        best != m_lastUpgradeSuggested) {
+        m_lastUpgradeSuggested = best;
+        emit modelNegotiation(
+            QStringLiteral("💡 You now have %1 of free RAM — enough for the more capable '%2' (~%3). "
+                           "Use Dev Hub → Switch Model to upgrade.")
+                .arg(humanBytes(available), best, ModelMemoryAdvisor::footprintDisplay(best)));
+    }
 }
 
 void Agent::setCodeDevelopmentEnabled(bool enabled)

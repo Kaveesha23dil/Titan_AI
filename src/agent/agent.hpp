@@ -5,6 +5,8 @@
 #include <QString>
 #include <QStringList>
 #include <QImage>
+#include <QTimer>
+#include "llm/model_memory_advisor.hpp"
 #include "llm/ollama_client.hpp"
 #include "llm/ollama_manager.hpp"
 #include "tools/code_fixer.hpp"
@@ -39,6 +41,7 @@ public:
     [[nodiscard]] QString currentModel() const;
     [[nodiscard]] QStringList installedModels() const;
     void unloadModel();
+    void negotiateModels();
     void performInstall(const QStringList &packages);
     void setAutoFixEnabled(bool enabled);
     [[nodiscard]] bool autoFixEnabled() const;
@@ -80,6 +83,7 @@ signals:
     void modelReady(const QString &model);
     void modelError(const QString &error);
     void modelsChanged(const QStringList &models);
+    void modelNegotiation(const QString &message);
     void installRequested(const QStringList &packages);
     void cameraRequested();
     void toolOutputReceived(const QString &line);
@@ -148,6 +152,8 @@ private:
     bool m_codeFixInProgress{false};
     QString m_projectDirectory;
     QString m_buildCommand;
+    QTimer m_memoryCheckTimer;
+    QString m_lastUpgradeSuggested;
 };
 
 #endif // TITANAI_AGENT_HPP

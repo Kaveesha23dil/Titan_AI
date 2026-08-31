@@ -30,6 +30,7 @@ add_executable(TitanAI
     src/gui/voice_settings_dialog.cpp
     src/gui/camera_dialog.cpp
     src/agent/agent.cpp
+    src/llm/model_memory_advisor.cpp
     src/llm/ollama_client.cpp
     src/llm/ollama_manager.cpp
     src/tools/code_fixer.cpp
@@ -92,6 +93,7 @@ endif()
 add_executable(titanai_tests
     tests/test_all.cpp
     src/agent/agent.cpp
+    src/llm/model_memory_advisor.cpp
     src/llm/ollama_client.cpp
     src/llm/ollama_manager.cpp
     src/tools/code_fixer.cpp
