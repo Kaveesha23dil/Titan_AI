@@ -30,6 +30,7 @@ private slots:
 private:
     void refreshFileList();
     void refreshEventsPreview();
+    void persistReminders();
 
     CalendarManager &m_calendarMgr;
     NotificationManager &m_notifMgr;

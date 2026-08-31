@@ -163,9 +163,11 @@ QString CodeFixer::readContextForFile(const QString &absoluteFilePath,
 
     QList<QPair<int, int>> ranges;
     for (const BuildError &error : fileErrors) {
-        const int lo = qMax(1, error.line - kContextRadius);
-        const int hi = qMin(lines.size(), error.line + kContextRadius);
-        ranges.append({lo, hi});
+        // Use 64-bit arithmetic so an adversarially large parsed line number
+        // (up to INT_MAX) cannot overflow when adding the context radius.
+        const qint64 lo = qMax<qint64>(1, qint64(error.line) - kContextRadius);
+        const qint64 hi = qMin<qint64>(lines.size(), qint64(error.line) + kContextRadius);
+        ranges.append({int(lo), int(hi)});
     }
     std::sort(ranges.begin(), ranges.end());
 
@@ -402,6 +404,10 @@ void CodeFixer::onBuildTimeout()
     if (m_buildProcess->state() != QProcess::NotRunning) {
         m_buildProcess->kill();
     }
+    // Clean up the process here so a later `finished` signal (which
+    // onBuildFinished will skip because m_buildDone is true) does not leak it.
+    m_buildProcess->deleteLater();
+    m_buildProcess = nullptr;
     m_buildDone = true;
     emit buildFinished(false,
                        QStringLiteral("Build timed out after %1 seconds.")

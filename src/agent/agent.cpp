@@ -7,6 +7,8 @@
 #include <QRegularExpression>
 #include <QTimer>
 
+#include <memory>
+
 Agent::Agent(QObject *parent)
     : QObject(parent)
     , m_ollamaClient(this)
@@ -20,6 +22,7 @@ Agent::Agent(QObject *parent)
     connect(&m_ollamaManager, &OllamaManager::statusChanged, this, &Agent::modelStatusChanged);
     connect(&m_ollamaManager, &OllamaManager::modelReady, this, &Agent::onModelReady);
     connect(&m_ollamaManager, &OllamaManager::modelError, this, &Agent::modelError);
+    connect(&m_ollamaManager, &OllamaManager::modelsChanged, this, &Agent::modelsChanged);
 
     connect(&m_packageManager, &PackageManager::outputReceived, this, &Agent::toolOutputReceived);
     connect(&m_packageManager, &PackageManager::finished, this, &Agent::onPackageManagerFinished);
@@ -145,6 +148,36 @@ void Agent::sendImageMessage(const QImage &image, const QString &text)
 void Agent::setModel(const QString &model)
 {
     m_ollamaClient.setModel(model);
+}
+
+void Agent::switchModel(const QString &model)
+{
+    if (model.trimmed().isEmpty() || model == m_ollamaClient.model()) {
+        return;
+    }
+
+    // Unload the old model weights to reclaim RAM.
+    m_ollamaClient.unloadModel();
+
+    // Point the chat client at the new model immediately and clear stale history
+    // so a prior conversation with the old model isn't sent to the new one.
+    m_ollamaClient.setModel(model);
+    m_ollamaClient.clearHistory();
+
+    // Ask the OllamaManager to verify the model is installed and warm it up in
+    // RAM. This re-runs the ready-check and, on success, emits modelReady() which
+    // (re-)sets the client model and warms it up.
+    m_ollamaManager.ensureModelReady(model);
+}
+
+void Agent::refreshModels()
+{
+    m_ollamaManager.refreshModels();
+}
+
+QStringList Agent::installedModels() const
+{
+    return m_ollamaManager.installedModels();
 }
 
 QString Agent::currentModel() const
@@ -1371,21 +1404,25 @@ void Agent::developUi(const QImage &designImage,
         }
 
         // We use requestImageCompletion for a non-streaming structured response
-        // Wire a one-shot connection to handle the result
+        // Wire a one-shot connection to handle the result. Using shared_ptr for
+        // the connection handle avoids leaking if Agent is destroyed before the
+        // model responds (the slot is auto-disconnected and the handle freed).
         const QString capturedBranch = branch;
         const QString capturedDir    = m_projectDirectory;
-        QMetaObject::Connection *connPtr = new QMetaObject::Connection;
+        const bool wasFixing = m_codeFixInProgress;
+        m_codeFixInProgress = false;
+        auto connPtr = std::make_shared<QMetaObject::Connection>();
         *connPtr = connect(&m_ollamaClient, &OllamaClient::completionReceived, this,
-            [this, connPtr, capturedBranch, capturedDir](const QString &response) {
+            [this, connPtr, capturedBranch, capturedDir, wasFixing](const QString &response) {
                 disconnect(*connPtr);
-                delete connPtr;
+                m_codeFixInProgress = wasFixing;
                 m_uiDeveloper.implementFromLlmOutput(response, capturedDir, capturedBranch);
             });
-        QMetaObject::Connection *errConnPtr = new QMetaObject::Connection;
+        auto errConnPtr = std::make_shared<QMetaObject::Connection>();
         *errConnPtr = connect(&m_ollamaClient, &OllamaClient::completionError, this,
-            [this, errConnPtr](const QString &error) {
+            [this, errConnPtr, wasFixing](const QString &error) {
                 disconnect(*errConnPtr);
-                delete errConnPtr;
+                m_codeFixInProgress = wasFixing;
                 emit uiDevelopmentFinished(false,
                     QStringLiteral("AI model error: %1").arg(error), QString());
             });
@@ -1401,18 +1438,20 @@ void Agent::developUi(const QImage &designImage,
         // Text-only: use non-streaming completion
         const QString capturedBranch = branch;
         const QString capturedDir    = m_projectDirectory;
-        QMetaObject::Connection *connPtr = new QMetaObject::Connection;
+        const bool wasFixing = m_codeFixInProgress;
+        m_codeFixInProgress = false;
+        auto connPtr = std::make_shared<QMetaObject::Connection>();
         *connPtr = connect(&m_ollamaClient, &OllamaClient::completionReceived, this,
-            [this, connPtr, capturedBranch, capturedDir](const QString &response) {
+            [this, connPtr, capturedBranch, capturedDir, wasFixing](const QString &response) {
                 disconnect(*connPtr);
-                delete connPtr;
+                m_codeFixInProgress = wasFixing;
                 m_uiDeveloper.implementFromLlmOutput(response, capturedDir, capturedBranch);
             });
-        QMetaObject::Connection *errConnPtr = new QMetaObject::Connection;
+        auto errConnPtr = std::make_shared<QMetaObject::Connection>();
         *errConnPtr = connect(&m_ollamaClient, &OllamaClient::completionError, this,
-            [this, errConnPtr](const QString &error) {
+            [this, errConnPtr, wasFixing](const QString &error) {
                 disconnect(*errConnPtr);
-                delete errConnPtr;
+                m_codeFixInProgress = wasFixing;
                 emit uiDevelopmentFinished(false,
                     QStringLiteral("AI model error: %1").arg(error), QString());
             });

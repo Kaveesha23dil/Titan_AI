@@ -2,6 +2,7 @@
 
 #include <QDateTime>
 #include <QMap>
+#include <QProcess>
 #include <algorithm>
 
 SuggestionEngine::SuggestionEngine(QObject *parent)
@@ -326,7 +327,7 @@ QString SuggestionEngine::timeDescription(int hour) const
 
 bool SuggestionEngine::isCurrentlyRunning(const QString &processName) const
 {
-    const QString cmd = QStringLiteral("pgrep -x %1 >/dev/null 2>&1")
-                            .arg(processName);
-    return system(cmd.toUtf8().constData()) == 0;
+    // Use QProcess with argument vector instead of building a shell string:
+    // avoids shell metacharacter / command injection from untrusted process names.
+    return QProcess::execute(QStringLiteral("pgrep"), QStringList{QStringLiteral("-x"), processName}) == 0;
 }

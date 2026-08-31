@@ -1,5 +1,7 @@
 #include "llm/ollama_manager.hpp"
 
+#include <algorithm>
+
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -49,6 +51,70 @@ bool OllamaManager::isVisionCapable(const QString &modelName)
            lower.contains(QStringLiteral("bakllava"));
 }
 
+// "org/model:tag" -> "model:tag" (strips optional namespace prefix)
+QString OllamaManager::parseInstalled(const QString &fullName) const
+{
+    QString name = fullName;
+    const int slash = name.lastIndexOf(QLatin1Char('/'));
+    if (slash >= 0) {
+        name = name.mid(slash + 1);
+    }
+    const int at = name.indexOf(QLatin1Char('@'));
+    if (at >= 0) {
+        name = name.left(at);
+    }
+    return name;
+}
+
+void OllamaManager::refreshModels()
+{
+    if (m_startedByUs && m_serverProcess && m_serverProcess->state() == QProcess::NotRunning) {
+        return;
+    }
+
+    QNetworkRequest request(m_tagsUrl);
+    request.setTransferTimeout(2500);
+
+    QNetworkReply *reply = m_networkManager.get(request);
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        reply->deleteLater();
+        handleTagsReply(reply);
+    });
+}
+
+void OllamaManager::handleTagsReply(QNetworkReply *reply)
+{
+    if (reply->error() != QNetworkReply::NoError) {
+        emit modelsChanged(m_installedModels);
+        return;
+    }
+
+    QJsonParseError parseError;
+    QJsonDocument doc = QJsonDocument::fromJson(reply->readAll(), &parseError);
+    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+        emit modelsChanged(m_installedModels);
+        return;
+    }
+
+    QJsonArray models = doc.object().value(QStringLiteral("models")).toArray();
+
+    QStringList installed;
+    installed.reserve(static_cast<int>(models.size()));
+    for (const QJsonValue &value : models) {
+        const QString name = parseInstalled(value.toObject().value(QStringLiteral("name")).toString());
+        if (!name.isEmpty()) {
+            installed.append(name);
+        }
+    }
+    installed.removeDuplicates();
+    std::sort(installed.begin(), installed.end(), [](const QString &a, const QString &b) {
+        return QString::compare(a, b, Qt::CaseInsensitive) < 0;
+    });
+
+    m_installedModels = installed;
+    emit modelsChanged(m_installedModels);
+}
+
 void OllamaManager::checkServerAndModel()
 {
     if (m_attempts++ >= kMaxAttempts) {
@@ -80,21 +146,30 @@ void OllamaManager::checkServerAndModel()
         QJsonArray models = doc.object().value(QStringLiteral("models")).toArray();
         QString selectedModel;
         m_visionModel.clear();
+        m_installedModels.clear();
+
+        QStringList installedNames;
+        installedNames.reserve(static_cast<int>(models.size()));
 
         // Detect any installed vision-capable models (e.g. gemma3:4b, llava)
         for (const QJsonValue &value : models) {
-            const QString name = value.toObject().value(QStringLiteral("name")).toString();
+            const QString name = parseInstalled(value.toObject().value(QStringLiteral("name")).toString());
+            installedNames.append(name);
             if (isVisionCapable(name)) {
                 m_visionModel = name;
                 break;
             }
         }
 
+        installedNames.removeDuplicates();
+        std::sort(installedNames.begin(), installedNames.end(), [](const QString &a, const QString &b) {
+            return QString::compare(a, b, Qt::CaseInsensitive) < 0;
+        });
+        m_installedModels = installedNames;
+
         // 1. Check for requested model (exact or prefix match)
-        for (const QJsonValue &value : models) {
-            const QString name = value.toObject().value(QStringLiteral("name")).toString();
-            const QString modelField = value.toObject().value(QStringLiteral("model")).toString();
-            if (name == m_model || modelField == m_model ||
+        for (const QString &name : installedNames) {
+            if (name == m_model ||
                 name.startsWith(m_model + QStringLiteral(":")) ||
                 (m_model.contains(QLatin1Char(':')) && name == m_model.section(QLatin1Char(':'), 0, 0)) ||
                 (name.contains(QLatin1Char(':')) && name.section(QLatin1Char(':'), 0, 0) == m_model)) {
@@ -104,9 +179,8 @@ void OllamaManager::checkServerAndModel()
         }
 
         // 2. Fallback to any installed coder model, or any available model
-        if (selectedModel.isEmpty() && !models.isEmpty()) {
-            for (const QJsonValue &value : models) {
-                const QString name = value.toObject().value(QStringLiteral("name")).toString();
+        if (selectedModel.isEmpty() && !installedNames.isEmpty()) {
+            for (const QString &name : installedNames) {
                 if (name.contains(QStringLiteral("coder"), Qt::CaseInsensitive) ||
                     name.contains(QStringLiteral("qwen"), Qt::CaseInsensitive)) {
                     selectedModel = name;
@@ -114,7 +188,7 @@ void OllamaManager::checkServerAndModel()
                 }
             }
             if (selectedModel.isEmpty()) {
-                selectedModel = models.first().toObject().value(QStringLiteral("name")).toString();
+                selectedModel = installedNames.first();
             }
         }
 
@@ -122,10 +196,12 @@ void OllamaManager::checkServerAndModel()
             m_pollTimer.stop();
             emit statusChanged(Status::Ready, QStringLiteral("Model ready: %1").arg(selectedModel));
             emit modelReady(selectedModel);
+            emit modelsChanged(m_installedModels);
             return;
         }
 
         m_pollTimer.stop();
+        emit modelsChanged(m_installedModels);
         failWithError(QStringLiteral("No models installed in Ollama. Install one with: ollama pull %1")
                           .arg(m_model));
     });

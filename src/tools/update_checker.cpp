@@ -141,7 +141,10 @@ void UpdateChecker::cancelCheck()
 void UpdateChecker::startPeriodicCheck(int intervalMinutes)
 {
     m_periodicCheckActive = true;
-    m_periodicTimer.setInterval(intervalMinutes * 60 * 1000);
+    // Guard against a zero/negative interval which would create a busy-looping
+    // 0-ms timer. Clamp to a sane 1-minute minimum.
+    const int clamped = qMax(intervalMinutes, 1);
+    m_periodicTimer.setInterval(qint64(clamped) * 60 * 1000);
     m_periodicTimer.start();
 }
 
@@ -320,7 +323,16 @@ void UpdateChecker::startProcessQueries()
     } else {
         emit checkError(QStringLiteral("pacman was not found; TitanAI cannot read "
                                        "installed packages on this system."));
+        // Notify any UI waiting on checkFinished so the check does not appear
+        // to hang forever.
+        const bool wasPeriodicFire = m_isPeriodicFire;
         resetState();
+        m_isPeriodicFire = wasPeriodicFire;
+        emit checkFinished(0);
+        if (m_isPeriodicFire) {
+            emit periodicCheckDone(0);
+        }
+        m_isPeriodicFire = false;
         return;
     }
 
@@ -467,6 +479,10 @@ void UpdateChecker::resetState()
 {
     for (QProcess **process : { &m_installedProcess, &m_repoUpdatesProcess, &m_aurProcess }) {
         if (*process) {
+            // Disconnect all handlers first so a late finished/errorOccurred
+            // signal from a terminated process cannot race with a newly
+            // started check and prematurely complete it (or touch freed state).
+            disconnect(*process, nullptr, this, nullptr);
             if ((*process)->state() != QProcess::NotRunning) {
                 (*process)->terminate();
                 if (!(*process)->waitForFinished(3000)) {

@@ -19,7 +19,7 @@ UiDeveloper::Framework UiDeveloper::detectFramework(const QString &projectDirect
 {
     QDir dir(projectDirectory);
     if (dir.exists(QStringLiteral("CMakeLists.txt")) ||
-        dir.exists(QStringLiteral("*.pro"))) {
+        !dir.entryList({ QStringLiteral("*.pro"), QStringLiteral("*.pri") }, QDir::Files).isEmpty()) {
         return Framework::QtCpp;
     }
     if (dir.exists(QStringLiteral("pubspec.yaml"))) {
@@ -327,7 +327,18 @@ void UiDeveloper::implementFromLlmOutput(const QString &llmOutput,
     QStringList skipped;
 
     for (const GeneratedFile &gf : files) {
-        const QString absPath = projectDir.filePath(gf.relativePath);
+        // Guard against path traversal / arbitrary writes: normalize the
+        // relative path and reject anything absolute, empty, or that resolves
+        // outside the target directory (LLM-derived paths, e.g. "../../.bashrc").
+        const QString rel = QDir::cleanPath(gf.relativePath);
+        if (rel.isEmpty() || QDir::isAbsolutePath(rel) || rel == QStringLiteral("..") ||
+            rel.startsWith(QStringLiteral("../"))) {
+            skipped << gf.relativePath;
+            emit progress(QStringLiteral("⚠ Skipped unsafe path: %1").arg(gf.relativePath));
+            continue;
+        }
+
+        const QString absPath = projectDir.filePath(rel);
         QFileInfo fi(absPath);
         QDir().mkpath(fi.absolutePath());
 
@@ -346,8 +357,8 @@ void UiDeveloper::implementFromLlmOutput(const QString &llmOutput,
         ts << gf.content;
         out.close();
 
-        emit progress(QStringLiteral("✓ Written: %1").arg(gf.relativePath));
-        writtenRelPaths << gf.relativePath;
+        emit progress(QStringLiteral("✓ Written: %1").arg(rel));
+        writtenRelPaths << rel;
     }
 
     if (writtenRelPaths.isEmpty()) {
