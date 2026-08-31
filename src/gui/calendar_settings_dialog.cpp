@@ -9,6 +9,7 @@
 #include <QLabel>
 #include <QListWidget>
 #include <QPushButton>
+#include <QSystemTrayIcon>
 #include <QVBoxLayout>
 
 CalendarSettingsDialog::CalendarSettingsDialog(CalendarManager &calendarMgr,
@@ -84,35 +85,36 @@ CalendarSettingsDialog::CalendarSettingsDialog(CalendarManager &calendarMgr,
     connect(m_testNotifButton, &QPushButton::clicked, this, &CalendarSettingsDialog::onTestNotification);
     connect(closeButton, &QPushButton::clicked, this, &QDialog::accept);
 
-    connect(m_notifEnabledCheck, &QCheckBox::toggled, this, [this](bool checked) {
-        NotificationManager::Config cfg = m_notifMgr.config();
-        cfg.enabled = checked;
-        m_notifMgr.setConfig(cfg);
-    });
-    connect(m_reminder30Check, &QCheckBox::toggled, this, [this](bool) {
-        NotificationManager::Config cfg = m_notifMgr.config();
-        cfg.reminderMinutes.clear();
-        if (m_reminder30Check->isChecked()) cfg.reminderMinutes.append(30);
-        if (m_reminder15Check->isChecked()) cfg.reminderMinutes.append(15);
-        if (m_reminder5Check->isChecked()) cfg.reminderMinutes.append(5);
-        if (cfg.reminderMinutes.isEmpty()) cfg.reminderMinutes.append(15);
-        m_notifMgr.setConfig(cfg);
-    });
-    connect(m_reminder15Check, &QCheckBox::toggled, this, [this](bool) {
-        m_reminder30Check->toggled(false);
-    });
-    connect(m_reminder5Check, &QCheckBox::toggled, this, [this](bool) {
-        m_reminder30Check->toggled(false);
-    });
-
+    // Initialize the checkbox states from the saved config BEFORE wiring the
+    // change handlers. Wiring first would make the setChecked() calls below
+    // fire the handlers and overwrite the very config we are trying to display.
     const NotificationManager::Config cfg = m_notifMgr.config();
     m_notifEnabledCheck->setChecked(cfg.enabled);
     m_reminder30Check->setChecked(cfg.reminderMinutes.contains(30));
     m_reminder15Check->setChecked(cfg.reminderMinutes.contains(15));
     m_reminder5Check->setChecked(cfg.reminderMinutes.contains(5));
-
     refreshFileList();
     refreshEventsPreview();
+
+    connect(m_notifEnabledCheck, &QCheckBox::toggled, this, [this](bool checked) {
+        NotificationManager::Config c = m_notifMgr.config();
+        c.enabled = checked;
+        m_notifMgr.setConfig(c);
+    });
+    connect(m_reminder30Check, &QCheckBox::toggled, this, [this](bool) { persistReminders(); });
+    connect(m_reminder15Check, &QCheckBox::toggled, this, [this](bool) { persistReminders(); });
+    connect(m_reminder5Check, &QCheckBox::toggled, this, [this](bool) { persistReminders(); });
+}
+
+void CalendarSettingsDialog::persistReminders()
+{
+    NotificationManager::Config cfg = m_notifMgr.config();
+    cfg.reminderMinutes.clear();
+    if (m_reminder30Check->isChecked()) cfg.reminderMinutes.append(30);
+    if (m_reminder15Check->isChecked()) cfg.reminderMinutes.append(15);
+    if (m_reminder5Check->isChecked()) cfg.reminderMinutes.append(5);
+    if (cfg.reminderMinutes.isEmpty()) cfg.reminderMinutes.append(15);
+    m_notifMgr.setConfig(cfg);
 }
 
 void CalendarSettingsDialog::onAddFile()

@@ -78,7 +78,8 @@ private slots:
 
         QString error;
         bool ok = CodeFixer::applyEdit(testFile, edit, &error);
-        QVERIFY2(ok, error.toUtf8().constData());
+        QByteArray errorBytes = error.toUtf8();
+        QVERIFY2(ok, errorBytes.constData());
 
         // Verify content
         QFile f(testFile);
@@ -189,7 +190,8 @@ private slots:
 
         qApp->exec();
 
-        QVERIFY2(errorMsg.isEmpty(), errorMsg.toUtf8().constData());
+        QByteArray errBytes = errorMsg.toUtf8();
+        QVERIFY2(errorMsg.isEmpty(), errBytes.constData());
         QVERIFY2(received, "Timed out waiting for completion response");
         std::cout << "[PASS] Non-streaming Response: " << receivedResponse.left(80).toStdString() << std::endl;
     }

@@ -26,6 +26,7 @@ add_executable(TitanAI
     src/main.cpp
     resources.qrc
     src/gui/main_window.cpp
+    src/gui/model_dialog.cpp
     src/gui/voice_settings_dialog.cpp
     src/gui/camera_dialog.cpp
     src/agent/agent.cpp

@@ -146,11 +146,12 @@ CalendarEvent CalendarManager::getNextEvent() const
 {
     const QDateTime now = QDateTime::currentDateTime();
     CalendarEvent next;
-    next.start = QDateTime::currentDateTime().addSecs(std::numeric_limits<qint64>::max());
+    bool found = false;
 
     for (const CalendarEvent &event : m_events) {
-        if (event.start > now && event.start < next.start) {
+        if (event.start > now && (!found || event.start < next.start)) {
             next = event;
+            found = true;
         }
     }
 
@@ -260,6 +261,25 @@ QList<CalendarEvent> CalendarManager::parseIcsContent(const QByteArray &content,
 
     text.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
     text.replace(QStringLiteral("\r"), QStringLiteral("\n"));
+
+    // RFC 5545 line unfolding: a line that begins with a space or tab is a
+    // continuation of the previous logical line (long property values are
+    // folded this way). Without unfolding, long SUMMARY/DESCRIPTION values
+    // would be silently truncated.
+    {
+        const QStringList rawLines = text.split(QLatin1Char('\n'));
+        QStringList unfolded;
+        unfolded.reserve(rawLines.size());
+        for (const QString &line : rawLines) {
+            if (!line.isEmpty() && (line.at(0) == QLatin1Char(' ') || line.at(0) == QLatin1Char('\t')) &&
+                !unfolded.isEmpty()) {
+                unfolded.last().append(line.mid(1));
+            } else {
+                unfolded.append(line);
+            }
+        }
+        text = unfolded.join(QLatin1Char('\n'));
+    }
 
     QRegularExpression veventRegex(
         QStringLiteral("BEGIN:VEVENT\\s+(.*?)END:VEVENT"),

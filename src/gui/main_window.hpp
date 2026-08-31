@@ -63,7 +63,10 @@ private slots:
     void onCalendarEventsReady(const QString &eventsSummary);
     void onCalendarNotificationAlert(const QString &title, const QString &message);
     void onOpenCalendarSettings();
-    void onModelChanged(int index);
+    void onManageModels();
+    void onModelsChanged(const QStringList &models);
+    void onSaveSettings();
+    void onSettingsBrowseProject();
 
     // Power Management slots
     void onPowerProfileChanged(int index);
@@ -95,6 +98,7 @@ private:
     QWidget *createWelcomePage();
     QWidget *createChatPage();
     QWidget *createDevHubPage();
+    QWidget *createSettingsPage();
     QWidget *createInputCard();
     QIcon createVectorIcon(const QString &name, int size = 24);
     void reparentInputCard(QVBoxLayout *targetLayout);
@@ -112,6 +116,8 @@ private:
     void updatePendingImageUi();
     void saveVoiceSettings(const VoiceEngine::Config &config);
     VoiceEngine::Config loadVoiceSettings();
+    void applyProjectDirectory(const QString &directory);
+    void updateModelLabels(const QString &model);
 
     // --- Core state ---
     Agent m_agent;
@@ -158,7 +164,8 @@ private:
     QProgressBar *m_micLevelBar{nullptr};
 
     // --- Dev Hub widgets ---
-    QComboBox *m_aiModelCombo{nullptr};
+    QLabel *m_aiModelLabel{nullptr};
+    QPushButton *m_changeModelButton{nullptr};
     QCheckBox *m_autoFixCheck{nullptr};
     QLineEdit *m_projectEdit{nullptr};
     QPushButton *m_browseButton{nullptr};
@@ -203,6 +210,14 @@ private:
     QPushButton   *m_applyAllButton{nullptr};
     QPlainTextEdit*m_updateOutputLog{nullptr};
     QSpinBox      *m_updateIntervalSpin{nullptr};
+
+    // --- Settings Page widgets ---
+    QLabel         *m_settingsModelLabel{nullptr};
+    QLineEdit      *m_settingsProjectEdit{nullptr};
+    QLineEdit      *m_settingsBuildEdit{nullptr};
+    QCheckBox      *m_settingsAutoFixCheck{nullptr};
+    QSpinBox       *m_settingsIntervalSpin{nullptr};
+    QLabel         *m_settingsStatusLabel{nullptr};
 };
 
 #endif // TITANAI_MAIN_WINDOW_HPP

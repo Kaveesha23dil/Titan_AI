@@ -293,6 +293,7 @@ QString PowerManager::recommendedKeepAlive() const
 // ---------------------------------------------------------------------------
 int PowerManager::readBrightnessPercent() const
 {
+    if (!QFile::exists(kBrightnessctl)) return -1;
     QProcess proc;
     proc.start(kBrightnessctl, {QStringLiteral("get")});
     proc.waitForFinished(2000);

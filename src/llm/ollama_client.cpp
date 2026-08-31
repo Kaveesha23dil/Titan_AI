@@ -5,6 +5,8 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 
+#include <memory>
+
 namespace {
 
 QJsonObject defaultOllamaOptions()
@@ -171,20 +173,19 @@ void OllamaClient::sendChatMessage(const QJsonObject &userMessageObj)
     QJsonDocument payloadDoc(payloadObj);
     QByteArray postData = payloadDoc.toJson(QJsonDocument::Compact);
 
-    m_streamBuffer.clear();
-    m_streamedContent.clear();
-    m_streamDone = false;
-    m_streamFailed = false;
+    // Stream state is scoped to this request so overlapping chat requests
+    // cannot corrupt one another's buffers.
+    auto state = std::make_shared<StreamState>();
 
     QNetworkReply *reply = m_networkManager.post(request, postData);
 
-    connect(reply, &QNetworkReply::readyRead, this, [this, reply]() {
-        processStreamData(reply);
+    connect(reply, &QNetworkReply::readyRead, this, [this, reply, state]() {
+        processStreamData(reply, *state);
     });
 
-    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
-        processStreamData(reply);
-        finalizeResponse(reply);
+    connect(reply, &QNetworkReply::finished, this, [this, reply, state]() {
+        processStreamData(reply, *state);
+        finalizeResponse(reply, *state);
         reply->deleteLater();
     });
 }
@@ -334,26 +335,26 @@ void OllamaClient::handleCompletionReply(QNetworkReply *reply)
     emit completionReceived(content);
 }
 
-void OllamaClient::processStreamData(QNetworkReply *reply)
+void OllamaClient::processStreamData(QNetworkReply *reply, StreamState &state)
 {
-    m_streamBuffer.append(reply->readAll());
+    state.buffer.append(reply->readAll());
 
     while (true) {
-        int newlineIdx = m_streamBuffer.indexOf('\n');
+        int newlineIdx = state.buffer.indexOf('\n');
         if (newlineIdx == -1) {
             break;
         }
 
-        QByteArray line = m_streamBuffer.left(newlineIdx).trimmed();
-        m_streamBuffer.remove(0, newlineIdx + 1);
+        QByteArray line = state.buffer.left(newlineIdx).trimmed();
+        state.buffer.remove(0, newlineIdx + 1);
 
         if (!line.isEmpty()) {
-            handleStreamLine(line);
+            handleStreamLine(line, state);
         }
     }
 }
 
-void OllamaClient::handleStreamLine(const QByteArray &line)
+void OllamaClient::handleStreamLine(const QByteArray &line, StreamState &state)
 {
     QJsonParseError parseError;
     QJsonDocument lineDoc = QJsonDocument::fromJson(line, &parseError);
@@ -364,7 +365,7 @@ void OllamaClient::handleStreamLine(const QByteArray &line)
     QJsonObject obj = lineDoc.object();
 
     if (obj.contains(QStringLiteral("error"))) {
-        m_streamFailed = true;
+        state.failed = true;
         emit errorOccurred(obj[QStringLiteral("error")].toString());
         return;
     }
@@ -372,21 +373,21 @@ void OllamaClient::handleStreamLine(const QByteArray &line)
     QString content = obj.value(QStringLiteral("message")).toObject()
                           .value(QStringLiteral("content")).toString();
     if (!content.isEmpty()) {
-        m_streamedContent += content;
+        state.streamedContent += content;
         emit responseChunkReceived(content);
     }
 
     if (obj.value(QStringLiteral("done")).toBool()) {
-        m_streamDone = true;
+        state.done = true;
     }
 }
 
-void OllamaClient::finalizeResponse(QNetworkReply *reply)
+void OllamaClient::finalizeResponse(QNetworkReply *reply, StreamState &state)
 {
     int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
     QNetworkReply::NetworkError netError = reply->error();
 
-    if (m_streamFailed) {
+    if (state.failed) {
         rollbackLastUserMessage();
         return;
     }
@@ -401,7 +402,7 @@ void OllamaClient::finalizeResponse(QNetworkReply *reply)
         }
 
         QByteArray responseData = reply->readAll();
-        if (m_streamBuffer.isEmpty()) {
+        if (state.buffer.isEmpty()) {
             QJsonParseError parseError;
             QJsonDocument errDoc = QJsonDocument::fromJson(responseData, &parseError);
             if (parseError.error == QJsonParseError::NoError && errDoc.isObject() && errDoc.object().contains(QStringLiteral("error"))) {
@@ -416,7 +417,7 @@ void OllamaClient::finalizeResponse(QNetworkReply *reply)
         return;
     }
 
-    if (!m_streamDone) {
+    if (!state.done) {
         rollbackLastUserMessage();
         emit errorOccurred(QStringLiteral("Stream ended unexpectedly before the response was complete."));
         return;
@@ -424,10 +425,10 @@ void OllamaClient::finalizeResponse(QNetworkReply *reply)
 
     QJsonObject assistantMessageObj;
     assistantMessageObj[QStringLiteral("role")] = QStringLiteral("assistant");
-    assistantMessageObj[QStringLiteral("content")] = m_streamedContent;
+    assistantMessageObj[QStringLiteral("content")] = state.streamedContent;
     m_history.append(assistantMessageObj);
 
-    emit responseReceived(m_streamedContent);
+    emit responseReceived(state.streamedContent);
 }
 
 void OllamaClient::rollbackLastUserMessage()

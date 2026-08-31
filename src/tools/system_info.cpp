@@ -85,6 +85,7 @@ QString SystemInfoTool::getHostname() const
     }
 
     char hostnameBuf[256];
+    hostnameBuf[sizeof(hostnameBuf) - 1] = '\0';
     if (gethostname(hostnameBuf, sizeof(hostnameBuf)) == 0) {
         return QString::fromUtf8(hostnameBuf);
     }

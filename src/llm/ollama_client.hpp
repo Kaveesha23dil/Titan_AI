@@ -4,10 +4,20 @@
 #include <QObject>
 #include <QString>
 #include <QUrl>
+#include <QByteArray>
 #include <QJsonArray>
 #include <QNetworkAccessManager>
 
 class QNetworkReply;
+
+// Per-request streaming state. Scoped to each request (rather than shared member
+// variables) so overlapping/streaming chat requests cannot corrupt one another.
+struct StreamState {
+    QByteArray buffer;
+    QString streamedContent;
+    bool done{false};
+    bool failed{false};
+};
 
 class OllamaClient : public QObject {
     Q_OBJECT
@@ -36,9 +46,9 @@ signals:
 
 private:
     void sendChatMessage(const QJsonObject &userMessageObj);
-    void processStreamData(QNetworkReply *reply);
-    void handleStreamLine(const QByteArray &line);
-    void finalizeResponse(QNetworkReply *reply);
+    void processStreamData(QNetworkReply *reply, StreamState &state);
+    void handleStreamLine(const QByteArray &line, StreamState &state);
+    void finalizeResponse(QNetworkReply *reply, StreamState &state);
     void rollbackLastUserMessage();
     void handleCompletionReply(QNetworkReply *reply);
 
@@ -47,10 +57,6 @@ private:
     QUrl m_warmupUrl{QStringLiteral("http://127.0.0.1:11434/api/generate")};
     QString m_model{QStringLiteral("gemma3:4b")};
     QJsonArray m_history;
-    QByteArray m_streamBuffer;
-    QString m_streamedContent;
-    bool m_streamDone{false};
-    bool m_streamFailed{false};
 };
 
 #endif // TITANAI_OLLAMA_CLIENT_HPP
