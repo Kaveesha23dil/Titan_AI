@@ -49,6 +49,8 @@ add_executable(TitanAI
     src/calendar/notification_manager.cpp
     src/gui/calendar_settings_dialog.cpp
     src/power/power_manager.cpp
+    src/agent/chat_history_manager.cpp
+    src/gui/chat_history_dialog.cpp
 )
 
 # Enable compiler warnings
@@ -106,6 +108,7 @@ add_executable(titanai_tests
     src/calendar/calendar_manager.cpp
     src/calendar/notification_manager.cpp
     src/power/power_manager.cpp
+    src/agent/chat_history_manager.cpp
 )
 
 target_compile_features(titanai_tests PRIVATE cxx_std_20)
