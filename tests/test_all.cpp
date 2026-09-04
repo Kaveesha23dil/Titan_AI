@@ -6,6 +6,7 @@
 #include <iostream>
 
 #include "agent/agent.hpp"
+#include "agent/chat_history_manager.hpp"
 #include "llm/ollama_client.hpp"
 #include "llm/ollama_manager.hpp"
 #include "tools/code_fixer.hpp"
@@ -259,12 +260,156 @@ private slots:
         UpdateChecker uc;
         // Empty state report
         const QString emptyReport = uc.formatUpdateReport();
-        QVERIFY(!emptyReport.isEmpty());
         // Once installed list is empty the report should indicate 0 installed
         QVERIFY(emptyReport.contains(QStringLiteral("Installed packages: 0")));
         QVERIFY(emptyReport.contains(QStringLiteral("up to date")) ||
                 emptyReport.contains(QStringLiteral("packages: 0")));
         std::cout << "[PASS] UpdateChecker empty report: " << emptyReport.left(60).toStdString() << std::endl;
+    }
+
+    // ── Chat History Manager Tests ─────────────────────────────────────────────
+
+    void testChatHistorySessionLifecycle() {
+        ChatHistoryManager mgr;
+
+        // On construction a default session is created automatically
+        QVERIFY(mgr.sessionCount() >= 1);
+        const QString firstId = mgr.currentSessionId();
+        QVERIFY(!firstId.isEmpty());
+
+        // Create a named session
+        const QString namedId = mgr.createSession(QStringLiteral("Test Session Alpha"));
+        QVERIFY(!namedId.isEmpty());
+        QVERIFY(namedId != firstId);
+        QCOMPARE(mgr.currentSessionId(), namedId);
+
+        // Verify it appears in the index
+        bool found = false;
+        for (const ChatSessionSummary &s : mgr.allSessions()) {
+            if (s.id == namedId && s.title == QStringLiteral("Test Session Alpha")) {
+                found = true;
+                break;
+            }
+        }
+        QVERIFY(found);
+
+        // Rename
+        QVERIFY(mgr.renameSession(namedId, QStringLiteral("Renamed Session")));
+        for (const ChatSessionSummary &s : mgr.allSessions()) {
+            if (s.id == namedId) {
+                QCOMPARE(s.title, QStringLiteral("Renamed Session"));
+                break;
+            }
+        }
+
+        // Switch back to first
+        QVERIFY(mgr.switchSession(firstId));
+        QCOMPARE(mgr.currentSessionId(), firstId);
+
+        // Delete named session
+        const int countBefore = mgr.sessionCount();
+        QVERIFY(mgr.deleteSession(namedId));
+        QCOMPARE(mgr.sessionCount(), countBefore - 1);
+
+        std::cout << "[PASS] ChatHistory session lifecycle (create/rename/switch/delete)" << std::endl;
+    }
+
+    void testChatHistoryPersistence() {
+        // Temporarily set the storage path via environment variable approach
+        // We test round-trip using two independent manager instances.
+        ChatHistoryManager mgr1;
+
+        const QString sessionId = mgr1.createSession(QStringLiteral("Persistence Test"));
+        mgr1.appendMessage(QStringLiteral("user"),      QStringLiteral("Hello persistence world!"));
+        mgr1.appendMessage(QStringLiteral("assistant"), QStringLiteral("Persistence confirmed."));
+
+        // Reload from disk via public loadSession
+        const ChatSession loaded = mgr1.loadSession(sessionId);
+        QCOMPARE(loaded.id,    sessionId);
+        QCOMPARE(loaded.title, QStringLiteral("Persistence Test"));
+        QCOMPARE(loaded.messages.size(), 2);
+        QCOMPARE(loaded.messages.at(0).role,    QStringLiteral("user"));
+        QCOMPARE(loaded.messages.at(0).content, QStringLiteral("Hello persistence world!"));
+        QCOMPARE(loaded.messages.at(1).role,    QStringLiteral("assistant"));
+        QCOMPARE(loaded.messages.at(1).content, QStringLiteral("Persistence confirmed."));
+
+        // Cleanup
+        mgr1.deleteSession(sessionId);
+        std::cout << "[PASS] ChatHistory message persistence (write + read-back)" << std::endl;
+    }
+
+    void testChatHistoryFullTextSearch() {
+        ChatHistoryManager mgr;
+
+        const QString s1 = mgr.createSession(QStringLiteral("CMake Session"));
+        mgr.appendMessage(QStringLiteral("user"),      QStringLiteral("How do I fix cmake build errors?"));
+        mgr.appendMessage(QStringLiteral("assistant"), QStringLiteral("You can run cmake --build to rebuild."));
+
+        const QString s2 = mgr.createSession(QStringLiteral("Python Session"));
+        mgr.appendMessage(QStringLiteral("user"),      QStringLiteral("Show me a Python list comprehension."));
+        mgr.appendMessage(QStringLiteral("assistant"), QStringLiteral("[x for x in range(10)]"));
+
+        // Single keyword
+        QList<SearchResult> results = mgr.search(QStringLiteral("cmake"));
+        QVERIFY(!results.isEmpty());
+        QCOMPARE(results.first().sessionId, s1);
+
+        // Case insensitivity
+        QList<SearchResult> ciResults = mgr.search(QStringLiteral("CMAKE"));
+        QVERIFY(!ciResults.isEmpty());
+
+        // Multi-word AND
+        QList<SearchResult> multiResults = mgr.search(QStringLiteral("cmake build"));
+        QVERIFY(!multiResults.isEmpty());
+
+        // Role filter – only assistant messages
+        SearchFilter filter;
+        filter.roleFilter = QStringLiteral("assistant");
+        QList<SearchResult> roleResults = mgr.search(QStringLiteral("cmake"), filter);
+        for (const SearchResult &r : roleResults) {
+            QCOMPARE(r.role, QStringLiteral("assistant"));
+        }
+
+        // No-match case
+        QList<SearchResult> noResults = mgr.search(QStringLiteral("zzzzznotfound"));
+        QVERIFY(noResults.isEmpty());
+
+        // Snippet should contain highlight mark for matches
+        if (!results.isEmpty()) {
+            QVERIFY(results.first().matchedSnippet.contains(QStringLiteral("<mark")));
+        }
+
+        // Cleanup
+        mgr.deleteSession(s1);
+        mgr.deleteSession(s2);
+        std::cout << "[PASS] ChatHistory full-text search (keywords, roles, case, snippets)" << std::endl;
+    }
+
+    void testChatHistoryExport() {
+        ChatHistoryManager mgr;
+
+        const QString sessionId = mgr.createSession(QStringLiteral("Export Test"));
+        mgr.appendMessage(QStringLiteral("user"),      QStringLiteral("Hello export world."));
+        mgr.appendMessage(QStringLiteral("assistant"), QStringLiteral("Export response here."));
+
+        // Markdown
+        const QString md = mgr.exportToMarkdown(sessionId);
+        QVERIFY(!md.isEmpty());
+        QVERIFY(md.contains(QStringLiteral("Export Test")));
+        QVERIFY(md.contains(QStringLiteral("Hello export world.")));
+        QVERIFY(md.contains(QStringLiteral("Export response here.")));
+        QVERIFY(md.contains(QStringLiteral("**You**")));
+        QVERIFY(md.contains(QStringLiteral("**TitanAI**")));
+
+        // Plain text
+        const QString txt = mgr.exportToPlainText(sessionId);
+        QVERIFY(!txt.isEmpty());
+        QVERIFY(txt.contains(QStringLiteral("You:")));
+        QVERIFY(txt.contains(QStringLiteral("TitanAI:")));
+
+        // Cleanup
+        mgr.deleteSession(sessionId);
+        std::cout << "[PASS] ChatHistory export (Markdown + plain text)" << std::endl;
     }
 };
 

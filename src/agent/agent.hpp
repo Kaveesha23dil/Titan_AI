@@ -20,6 +20,7 @@
 #include "calendar/calendar_manager.hpp"
 #include "calendar/notification_manager.hpp"
 #include "power/power_manager.hpp"
+#include "agent/chat_history_manager.hpp"
 
 class Agent : public QObject {
     Q_OBJECT
@@ -60,6 +61,12 @@ public:
     [[nodiscard]] DiskCleanup &diskCleanup();
     [[nodiscard]] UpdateChecker &updateChecker();
 
+    // Chat History
+    [[nodiscard]] ChatHistoryManager &chatHistoryManager();
+    void startNewConversation();
+    [[nodiscard]] QList<SearchResult> searchChatHistory(const QString &query,
+                                                        const SearchFilter &filter = {}) const;
+
     // Power Management
     [[nodiscard]] PowerManager &powerManager();
     void applyPowerProfile(PowerProfile profile);
@@ -98,6 +105,10 @@ signals:
     void uiDevelopmentProgress(const QString &message);
     void uiDevelopmentFinished(bool success, const QString &summary, const QString &branchName);
 
+    // Chat History signals
+    void chatHistorySearchResult(const QString &formattedResult);
+    void newConversationStarted(const QString &sessionId);
+
 private slots:
     void onModelReady(const QString &model);
     void onPackageManagerFinished(bool success, const QString &summary);
@@ -117,6 +128,7 @@ private:
     bool handleCodeFixRequestQuery(const QString &message);
     bool handleUiDevelopmentQuery(const QString &message, const QImage &image = QImage());
     bool handlePowerQuery(const QString &message);
+    bool handleChatHistoryQuery(const QString &message);
     void startPasteFix(const QString &message);
     void startBuildFix();
     void requestFix(const QList<CodeFixer::BuildError> &errors);
@@ -143,6 +155,7 @@ private:
     UpdateChecker m_updateChecker;
     UiDeveloper m_uiDeveloper;
     PowerManager m_powerManager;
+    ChatHistoryManager m_chatHistoryManager;
     bool m_codeDevelopmentEnabled{false};
     bool m_autoFixEnabled{false};
     bool m_codeFixInProgress{false};

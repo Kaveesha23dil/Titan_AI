@@ -3,6 +3,7 @@
 #include "gui/model_dialog.hpp"
 #include "gui/voice_settings_dialog.hpp"
 #include "gui/calendar_settings_dialog.hpp"
+#include "gui/chat_history_dialog.hpp"
 
 #include <QBuffer>
 #include <QCheckBox>
@@ -35,6 +36,7 @@
 #include <QTime>
 #include <QTimer>
 #include <QVBoxLayout>
+#include <QShortcut>
 
 // ─────────────────────────────────────────────────────────────
 //  Colour tokens  (dark theme)
@@ -196,6 +198,19 @@ QIcon MainWindow::createVectorIcon(const QString &name, int size)
         };
         arrowHead(180.0);   // end of first arc
         arrowHead(360.0);   // end of second arc
+    } else if (name == QLatin1String("history")) {
+        // Clock / history icon: circle with clock hands
+        QRectF circle(m, m, s - 2 * m, s - 2 * m);
+        p.drawEllipse(circle);
+        const QPointF center(s / 2, s / 2);
+        // Hour hand (pointing up-left)
+        p.drawLine(center, QPointF(center.x() - (s - 2*m) * 0.18, center.y() - (s - 2*m) * 0.28));
+        // Minute hand (pointing right)
+        p.drawLine(center, QPointF(center.x() + (s - 2*m) * 0.28, center.y()));
+        // Center dot
+        p.setBrush(QColor(Col::TextSecondary));
+        p.drawEllipse(center, 1.8, 1.8);
+        p.setBrush(Qt::NoBrush);
     } else if (name == QLatin1String("voice_settings")) {
         // Sliders icon
         for (int i = 0; i < 3; ++i) {
@@ -340,10 +355,11 @@ QWidget *MainWindow::createSidebar()
         return btn;
     };
 
-    m_navHome = makeNavBtn(QStringLiteral("home"), QStringLiteral("Home"));
-    m_navChat = makeNavBtn(QStringLiteral("chat"), QStringLiteral("Chat"));
-    m_navDev  = makeNavBtn(QStringLiteral("dev"),  QStringLiteral("Developer Hub"));
+    m_navHome    = makeNavBtn(QStringLiteral("home"),    QStringLiteral("Home"));
+    m_navChat    = makeNavBtn(QStringLiteral("chat"),    QStringLiteral("Chat"));
+    m_navDev     = makeNavBtn(QStringLiteral("dev"),     QStringLiteral("Developer Hub"));
     m_navCalendar = makeNavBtn(QStringLiteral("calendar"), QStringLiteral("Calendar Settings"));
+    m_navHistory = makeNavBtn(QStringLiteral("history"),  QStringLiteral("Chat History & Search (Ctrl+H)"));
 
     m_navHome->setChecked(true);
 
@@ -356,11 +372,12 @@ QWidget *MainWindow::createSidebar()
     m_navSettings->setCheckable(false);
 
     // Connect navigation
-    connect(m_navHome, &QPushButton::clicked, this, [this]() { navigateTo(0); });
-    connect(m_navChat, &QPushButton::clicked, this, [this]() { navigateTo(1); });
-    connect(m_navDev,  &QPushButton::clicked, this, [this]() { navigateTo(2); });
-    connect(m_navCalendar, &QPushButton::clicked, this, &MainWindow::onOpenCalendarSettings);
+    connect(m_navHome,    &QPushButton::clicked, this, [this]() { navigateTo(0); });
+    connect(m_navChat,    &QPushButton::clicked, this, [this]() { navigateTo(1); });
+    connect(m_navDev,     &QPushButton::clicked, this, [this]() { navigateTo(2); });
+    connect(m_navCalendar,    &QPushButton::clicked, this, &MainWindow::onOpenCalendarSettings);
     connect(m_navVoiceSettings, &QPushButton::clicked, this, &MainWindow::onVoiceSettings);
+    connect(m_navHistory, &QPushButton::clicked, this, &MainWindow::onOpenChatHistory);
     connect(m_navSettings, &QPushButton::clicked, this, [this]() { navigateTo(3); });
 
     return sidebar;
@@ -1871,6 +1888,25 @@ MainWindow::MainWindow(QWidget *parent)
     m_voiceEngine.setConfig(loadVoiceSettings());
     updateVoiceUi();
 
+    // ── Keyboard shortcuts for Chat History ──────────────────────────────────
+    auto *shortcutH = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_H), this);
+    connect(shortcutH, &QShortcut::activated, this, &MainWindow::onOpenChatHistory);
+
+    auto *shortcutF = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_F), this);
+    connect(shortcutF, &QShortcut::activated, this, &MainWindow::onOpenChatHistory);
+
+    // When a new conversation is started from the agent (natural language or dialog),
+    // clear the visible chat display so the UI reflects the fresh session.
+    connect(&m_agent, &Agent::newConversationStarted, this, [this](const QString &) {
+        if (m_chatDisplay) {
+            m_chatDisplay->clear();
+        }
+        appendMessage(QStringLiteral("TitanAI"),
+                      QStringLiteral("✨ New conversation started. Previous chat saved — access it via "
+                                     "the history panel (Ctrl+H)."),
+                      Col::AccentGlow);
+    });
+
     // Welcome message in chat
     appendMessage(QStringLiteral("TitanAI"),
                   QStringLiteral("Welcome! Loading the local AI model. You can start chatting once "
@@ -2473,6 +2509,67 @@ void MainWindow::onVoiceButtonToggled(bool enabled)
     } else {
         m_voiceEngine.stopListening();
     }
+}
+
+// ─────────────────────────────────────────────────────────────
+//  Chat History slots
+// ─────────────────────────────────────────────────────────────
+void MainWindow::onOpenChatHistory()
+{
+    ChatHistoryDialog dialog(&m_agent.chatHistoryManager(), this);
+
+    connect(&dialog, &ChatHistoryDialog::loadSessionRequested,
+            this, &MainWindow::onLoadHistorySession);
+
+    connect(&dialog, &ChatHistoryDialog::newConversationRequested,
+            this, [this]() {
+                m_agent.startNewConversation();
+            });
+
+    dialog.exec();
+}
+
+void MainWindow::onLoadHistorySession(const QString &sessionId)
+{
+    // Load the full session from disk
+    const ChatSession session =
+        m_agent.chatHistoryManager().loadSession(sessionId);
+
+    if (session.id.isEmpty()) {
+        return;
+    }
+
+    // Switch the history manager's active session
+    m_agent.chatHistoryManager().switchSession(sessionId);
+
+    // Navigate to chat page and replay messages into the display
+    navigateTo(1);
+    if (m_chatDisplay) {
+        m_chatDisplay->clear();
+    }
+
+    for (const ChatMessage &msg : session.messages) {
+        const QString role = msg.role;
+        if (role == QStringLiteral("user")) {
+            appendMessage(QStringLiteral("You"), msg.content, Col::AccentCyan);
+        } else if (role == QStringLiteral("assistant")) {
+            appendMessage(QStringLiteral("TitanAI"), msg.content, Col::AccentGlow);
+        } else if (role == QStringLiteral("error")) {
+            appendMessage(QStringLiteral("Error"), msg.content, Col::Danger);
+        } else {
+            appendPlainLine(msg.content, Col::TextMuted);
+        }
+        if (msg.hasImage) {
+            appendPlainLine(QStringLiteral("[Image attached]"), Col::AccentCyan);
+        }
+    }
+
+    // Inform the user
+    appendMessage(QStringLiteral("TitanAI"),
+                  QStringLiteral("📂 Loaded conversation: **%1** (%2 messages). "
+                                 "You can continue chatting where you left off.")
+                      .arg(session.title, QString::number(session.messages.size())),
+                  Col::AccentGlow);
 }
 
 void MainWindow::onCaptureFromCamera()

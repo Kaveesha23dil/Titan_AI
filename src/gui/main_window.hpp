@@ -8,6 +8,7 @@
 
 #include "agent/agent.hpp"
 #include "voice/voice_engine.hpp"
+#include "gui/chat_history_dialog.hpp"
 
 class QCheckBox;
  class QComboBox;
@@ -42,6 +43,10 @@ private slots:
     void onToolOutput(const QString &line);
     void onBrowseProject();
     void onBuildAndFixClicked();
+
+    // Chat History slots
+    void onOpenChatHistory();
+    void onLoadHistorySession(const QString &sessionId);
     void onOrganizeClicked();
     void onDiskCleanupClicked();
 
@@ -150,6 +155,10 @@ private:
     QTextBrowser *m_chatDisplay{nullptr};
     QLabel *m_statusLabel{nullptr};
     QVBoxLayout *m_chatInputSlot{nullptr};
+
+
+    // --- Chat History ---
+    QPushButton   *m_navHistory{nullptr};  ///< Sidebar history button (🕐)
 
     // --- Shared Input Card ---
     QWidget *m_inputCard{nullptr};

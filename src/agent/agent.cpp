@@ -43,6 +43,11 @@ Agent::Agent(QObject *parent)
     // UI Developer
     connect(&m_uiDeveloper, &UiDeveloper::progress, this, &Agent::uiDevelopmentProgress);
     connect(&m_uiDeveloper, &UiDeveloper::finished, this, &Agent::uiDevelopmentFinished);
+
+    // Chat History: log every final assistant response to the active session
+    connect(this, &Agent::responseReceived, this, [this](const QString &response) {
+        m_chatHistoryManager.appendMessage(QStringLiteral("assistant"), response);
+    });
 }
 
 void Agent::initializeModel(const QString &model)
@@ -59,6 +64,13 @@ void Agent::onModelReady(const QString &model)
 
 void Agent::sendMessage(const QString &message)
 {
+    // Log the user message to the active conversation session
+    m_chatHistoryManager.appendMessage(QStringLiteral("user"), message);
+
+    if (handleChatHistoryQuery(message)) {
+        return;
+    }
+
     if (handleSystemInfoQuery(message)) {
         return;
     }
@@ -985,6 +997,184 @@ UpdateChecker &Agent::updateChecker()
 {
     return m_updateChecker;
 }
+
+ChatHistoryManager &Agent::chatHistoryManager()
+{
+    return m_chatHistoryManager;
+}
+
+void Agent::startNewConversation()
+{
+    const QString sessionId = m_chatHistoryManager.createSession(QStringLiteral("New Conversation"));
+    emit newConversationStarted(sessionId);
+}
+
+QList<SearchResult> Agent::searchChatHistory(const QString &query, const SearchFilter &filter) const
+{
+    return m_chatHistoryManager.search(query, filter);
+}
+
+bool Agent::handleChatHistoryQuery(const QString &message)
+{
+    const QString lower = message.toLower().simplified();
+
+    // Keywords that trigger chat history / search behaviour
+    const bool isSearchHistory =
+        (lower.contains(QStringLiteral("search chat")) ||
+         lower.contains(QStringLiteral("search history")) ||
+         lower.contains(QStringLiteral("search conversation")) ||
+         lower.contains(QStringLiteral("find in chat")) ||
+         lower.contains(QStringLiteral("find conversation")) ||
+         lower.contains(QStringLiteral("find in history")) ||
+         lower.contains(QStringLiteral("search my chat")) ||
+         lower.contains(QStringLiteral("search my history")));
+
+    const bool isListHistory =
+        (lower == QStringLiteral("list conversations") ||
+         lower == QStringLiteral("show conversations") ||
+         lower == QStringLiteral("list chats") ||
+         lower == QStringLiteral("show chats") ||
+         lower == QStringLiteral("chat history") ||
+         lower == QStringLiteral("show history") ||
+         lower == QStringLiteral("my conversations") ||
+         lower.contains(QStringLiteral("list my conversations")) ||
+         lower.contains(QStringLiteral("show my conversations")) ||
+         lower.contains(QStringLiteral("show my chats")) ||
+         lower.contains(QStringLiteral("show chat history")));
+
+    const bool isNewChat =
+        (lower == QStringLiteral("new chat") ||
+         lower == QStringLiteral("new conversation") ||
+         lower == QStringLiteral("start new chat") ||
+         lower == QStringLiteral("start new conversation") ||
+         lower == QStringLiteral("clear chat") ||
+         lower.contains(QStringLiteral("start a new conversation")) ||
+         lower.contains(QStringLiteral("start a new chat")));
+
+    if (!isSearchHistory && !isListHistory && !isNewChat) {
+        return false;
+    }
+
+    if (isNewChat) {
+        startNewConversation();
+        emit responseReceived(
+            QStringLiteral("✨ **New conversation started.** Your previous chat has been saved and "
+                           "can be accessed from the history panel (Ctrl+H)."));
+        return true;
+    }
+
+    if (isListHistory) {
+        const QList<ChatSessionSummary> sessions = m_chatHistoryManager.allSessions();
+        if (sessions.isEmpty()) {
+            emit responseReceived(QStringLiteral("📋 No saved conversations found."));
+            return true;
+        }
+
+        QString response = QStringLiteral("📋 **Your Conversations** (%1 total):\n\n").arg(sessions.size());
+        int idx = 1;
+        for (const ChatSessionSummary &s : sessions) {
+            const QString age = [&]() -> QString {
+                const qint64 secsAgo = s.updatedAt.secsTo(QDateTime::currentDateTime());
+                if (secsAgo < 60) return QStringLiteral("just now");
+                if (secsAgo < 3600) return QStringLiteral("%1m ago").arg(secsAgo / 60);
+                if (secsAgo < 86400) return QStringLiteral("%1h ago").arg(secsAgo / 3600);
+                return QStringLiteral("%1d ago").arg(secsAgo / 86400);
+            }();
+
+            response += QStringLiteral("%1. **%2** — %3 messages · %4\n")
+                            .arg(idx++)
+                            .arg(s.title)
+                            .arg(s.messageCount)
+                            .arg(age);
+
+            if (!s.lastSnippet.isEmpty()) {
+                response += QStringLiteral("   _%1_\n").arg(s.lastSnippet);
+            }
+            response += QLatin1Char('\n');
+        }
+
+        response += QStringLiteral(
+            "\n💡 *Tip: Open the history panel with* **Ctrl+H** *to search and load any conversation.*");
+        emit responseReceived(response);
+        return true;
+    }
+
+    // isSearchHistory – extract the search terms after trigger phrase
+    static const QStringList kTriggers = {
+        QStringLiteral("search chat for"),
+        QStringLiteral("search history for"),
+        QStringLiteral("search conversation for"),
+        QStringLiteral("find in chat for"),
+        QStringLiteral("find conversation about"),
+        QStringLiteral("find in history for"),
+        QStringLiteral("search my chat for"),
+        QStringLiteral("search my history for"),
+        QStringLiteral("search chat"),
+        QStringLiteral("search history"),
+        QStringLiteral("search conversation"),
+        QStringLiteral("find in chat"),
+        QStringLiteral("search my chat"),
+        QStringLiteral("search my history"),
+    };
+
+    QString query;
+    for (const QString &trigger : kTriggers) {
+        const int pos = lower.indexOf(trigger);
+        if (pos >= 0) {
+            query = message.mid(pos + trigger.length()).trimmed();
+            break;
+        }
+    }
+
+    if (query.isEmpty()) {
+        emit responseReceived(
+            QStringLiteral("🔍 What would you like to search for in your chat history? "
+                           "Try: *\"search chat for cmake errors\"*"));
+        return true;
+    }
+
+    const QList<SearchResult> results = m_chatHistoryManager.search(query);
+
+    if (results.isEmpty()) {
+        emit responseReceived(
+            QStringLiteral("🔍 No matches found for **\"%1\"** in your chat history.\n\n"
+                           "💡 You can also open the history panel with **Ctrl+H** for visual search.")
+                .arg(query.toHtmlEscaped()));
+        return true;
+    }
+
+    QString response =
+        QStringLiteral("🔍 **Search results for \"%1\"** — %2 match(es):\n\n")
+            .arg(query, QString::number(results.size()));
+
+    const int displayCount = qMin(results.size(), 5);
+    for (int i = 0; i < displayCount; ++i) {
+        const SearchResult &r = results.at(i);
+        const QString roleLabel =
+            r.role == QStringLiteral("user")      ? QStringLiteral("You") :
+            r.role == QStringLiteral("assistant") ? QStringLiteral("TitanAI") :
+            r.role;
+
+        response += QStringLiteral("**%1.** *%2* — in **\"%3\"**\n")
+                        .arg(i + 1)
+                        .arg(roleLabel, r.sessionTitle);
+        response += QStringLiteral("   %1\n\n").arg(r.matchedSnippet);
+    }
+
+    if (results.size() > displayCount) {
+        response += QStringLiteral(
+            "_… and %1 more result(s). Open the history panel (**Ctrl+H**) to see all._\n")
+            .arg(results.size() - displayCount);
+    }
+
+    response += QStringLiteral(
+        "\n💡 *Open the history panel with* **Ctrl+H** *to load any conversation into view.*");
+
+    emit chatHistorySearchResult(response);
+    emit responseReceived(response);
+    return true;
+}
+
 
 bool Agent::handleCalendarQuery(const QString &message)
 {
