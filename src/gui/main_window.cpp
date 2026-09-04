@@ -1,5 +1,6 @@
 #include "gui/main_window.hpp"
 #include "gui/camera_dialog.hpp"
+#include "gui/model_dialog.hpp"
 #include "gui/voice_settings_dialog.hpp"
 #include "gui/calendar_settings_dialog.hpp"
 #include "gui/chat_history_dialog.hpp"
@@ -29,7 +30,10 @@
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QStackedWidget>
+#include <QSpinBox>
+#include <QSystemTrayIcon>
 #include <QTextBrowser>
+#include <QTime>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QShortcut>
@@ -374,6 +378,7 @@ QWidget *MainWindow::createSidebar()
     connect(m_navCalendar,    &QPushButton::clicked, this, &MainWindow::onOpenCalendarSettings);
     connect(m_navVoiceSettings, &QPushButton::clicked, this, &MainWindow::onVoiceSettings);
     connect(m_navHistory, &QPushButton::clicked, this, &MainWindow::onOpenChatHistory);
+    connect(m_navSettings, &QPushButton::clicked, this, [this]() { navigateTo(3); });
 
     return sidebar;
 }
@@ -751,26 +756,24 @@ QWidget *MainWindow::createDevHubPage()
     perfLayout->setSpacing(10);
 
     auto *perfRow = new QHBoxLayout;
-    auto *perfLabel = new QLabel(QStringLiteral("Model Profile:"), perfBox);
+    auto *perfLabel = new QLabel(QStringLiteral("Active Model:"), perfBox);
     perfLabel->setFixedWidth(100);
 
-    m_aiModelCombo = new QComboBox(perfBox);
-    m_aiModelCombo->addItem(QStringLiteral("⚡ Low RAM Mode (Qwen2.5-Coder 1.5B ~980MB RAM)"), QStringLiteral("qwen2.5-coder:1.5b"));
-    m_aiModelCombo->addItem(QStringLiteral("🧠 Standard Mode (Qwen2.5-Coder 3B ~1.9GB RAM)"), QStringLiteral("qwen2.5-coder:3b"));
-    if (m_agent.currentModel() == QStringLiteral("qwen2.5-coder:3b")) {
-        m_aiModelCombo->setCurrentIndex(1);
-    } else {
-        m_aiModelCombo->setCurrentIndex(0);
-    }
-    m_aiModelCombo->setStyleSheet(QStringLiteral(
-        "QComboBox { background: %1; border: 1px solid %2; border-radius: 6px; "
-        "            color: %3; padding: 6px 12px; } "
-        "QComboBox::drop-down { border: none; } "
-        "QComboBox QAbstractItemView { background: %1; color: %3; selection-background-color: %4; }"
-    ).arg(Col::BgCard, Col::Border, Col::TextPrimary, Col::Accent));
+    m_aiModelLabel = new QLabel(m_agent.currentModel(), perfBox);
+    m_aiModelLabel->setStyleSheet(QStringLiteral(
+        "background: %1; border: 1px solid %2; border-radius: 6px; color: %3; padding: 6px 12px; font-weight: 600;"
+    ).arg(Col::BgCard, Col::Border, Col::AccentGlow));
 
-    connect(m_aiModelCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &MainWindow::onModelChanged);
+    m_changeModelButton = new QPushButton(QStringLiteral("⚙ Switch Model..."), perfBox);
+    m_changeModelButton->setToolTip(QStringLiteral("Open the AI model manager to switch or install a more powerful model"));
+    m_changeModelButton->setCursor(Qt::PointingHandCursor);
+    m_changeModelButton->setStyleSheet(QStringLiteral(
+        "QPushButton { background: %1; border: 1px solid %2; border-radius: 6px; "
+        "              color: %3; padding: 6px 12px; font-weight: 600; }"
+        "QPushButton:hover { background: %4; color: white; border-color: %4; }"
+    ).arg(Col::BgCard, Col::Border, Col::Accent, Col::Accent));
+
+    connect(m_changeModelButton, &QPushButton::clicked, this, &MainWindow::onManageModels);
 
     auto *freeRamBtn = new QPushButton(QStringLiteral("🧹 Free AI RAM"), perfBox);
     freeRamBtn->setToolTip(QStringLiteral("Immediately unload Ollama model weights from RAM"));
@@ -790,7 +793,8 @@ QWidget *MainWindow::createDevHubPage()
     });
 
     perfRow->addWidget(perfLabel);
-    perfRow->addWidget(m_aiModelCombo, 1);
+    perfRow->addWidget(m_aiModelLabel, 1);
+    perfRow->addWidget(m_changeModelButton);
     perfRow->addWidget(freeRamBtn);
     perfLayout->addLayout(perfRow);
 
@@ -1138,24 +1142,113 @@ QWidget *MainWindow::createDevHubPage()
     cleanupLayout->addWidget(m_diskCleanupButton, 0, Qt::AlignLeft);
     layout->addWidget(cleanupBox);
 
-    // ── ⑤ Update Checker ────────────────────────────────────
-    auto *updatesBox = new QGroupBox(QStringLiteral("🔄  Update Checker"), content);
+    // ── ⑤ Update Checker ──────────────────────────────────────
+    auto *updatesBox    = new QGroupBox(QStringLiteral("🔄  Update Checker"), content);
     auto *updatesLayout = new QVBoxLayout(updatesBox);
-    updatesLayout->setSpacing(12);
+    updatesLayout->setSpacing(10);
 
-    auto *updatesDesc = new QLabel(
-        QStringLiteral("Track installed package versions and see which packages have newer "
-                       "versions available (official repositories and AUR)."),
+    // Header row: description + count badge
+    auto *updHeaderRow = new QHBoxLayout;
+    auto *updatesDesc  = new QLabel(
+        QStringLiteral("Track installed package versions and get notified when updates are available. "
+                       "One-click apply — opens a terminal window for safe, supervised installation."),
         updatesBox);
     updatesDesc->setWordWrap(true);
     updatesDesc->setStyleSheet(QStringLiteral(
         "QLabel { color: %1; font-size: 13px; }").arg(Col::TextSecondary));
-    updatesLayout->addWidget(updatesDesc);
+    updHeaderRow->addWidget(updatesDesc, 1);
 
-    m_checkUpdatesButton = makeActionBtn(updatesBox, QStringLiteral("Check for Updates"),
-                                          QStringLiteral("update"),
-                                          QStringLiteral("Compare installed package versions with repositories"));
-    updatesLayout->addWidget(m_checkUpdatesButton, 0, Qt::AlignLeft);
+    m_updateCountBadge = new QLabel(updatesBox);
+    m_updateCountBadge->setFixedSize(28, 28);
+    m_updateCountBadge->setAlignment(Qt::AlignCenter);
+    m_updateCountBadge->setVisible(false);
+    m_updateCountBadge->setStyleSheet(QStringLiteral(
+        "QLabel { background: #ef4444; color: white; border-radius: 14px; "
+        "         font-weight: 700; font-size: 11px; }"));
+    updHeaderRow->addWidget(m_updateCountBadge);
+    updatesLayout->addLayout(updHeaderRow);
+
+    // Progress bar (hidden when idle, pulsing during check)
+    m_updateProgressBar = new QProgressBar(updatesBox);
+    m_updateProgressBar->setRange(0, 0);  // indeterminate
+    m_updateProgressBar->setFixedHeight(6);
+    m_updateProgressBar->setTextVisible(false);
+    m_updateProgressBar->setVisible(false);
+    m_updateProgressBar->setStyleSheet(QStringLiteral(
+        "QProgressBar { background: %1; border-radius: 3px; border: none; }"
+        "QProgressBar::chunk { background: %2; border-radius: 3px; }"
+    ).arg(Col::BgCard, Col::Accent));
+    updatesLayout->addWidget(m_updateProgressBar);
+
+    // Status label (last-checked + update count)
+    m_updateStatusLabel = new QLabel(QStringLiteral("Not checked yet."), updatesBox);
+    m_updateStatusLabel->setStyleSheet(
+        QStringLiteral("color: %1; font-size: 11px;").arg(Col::TextMuted));
+    updatesLayout->addWidget(m_updateStatusLabel);
+
+    // Action buttons row: Check | Apply Repo | Apply All | interval spinner
+    auto *updBtnRow = new QHBoxLayout;
+    updBtnRow->setSpacing(8);
+
+    m_checkUpdatesButton = makeActionBtn(updatesBox, QStringLiteral("🔍 Check Now"),
+                                         QStringLiteral("update"),
+                                         QStringLiteral("Compare installed package versions with repositories"));
+    updBtnRow->addWidget(m_checkUpdatesButton);
+
+    m_applyRepoButton = new QPushButton(QStringLiteral("⬆ Apply Repo Updates"), updatesBox);
+    m_applyRepoButton->setCursor(Qt::PointingHandCursor);
+    m_applyRepoButton->setEnabled(false);
+    m_applyRepoButton->setToolTip(QStringLiteral("Run: sudo pacman -Syu in a terminal window"));
+    m_applyRepoButton->setStyleSheet(QStringLiteral(
+        "QPushButton { background: %1; border: 1px solid %2; border-radius: 6px; "
+        "              color: %3; padding: 8px 14px; font-weight: 600; }"
+        "QPushButton:hover:enabled { background: %4; color: white; border-color: %4; }"
+        "QPushButton:disabled { color: %5; border-color: %6; }"
+    ).arg(Col::BgCard, Col::Accent, Col::Accent, Col::Accent, Col::TextMuted, Col::Border));
+    updBtnRow->addWidget(m_applyRepoButton);
+
+    m_applyAllButton = new QPushButton(QStringLiteral("🚀 Apply All (+ AUR)"), updatesBox);
+    m_applyAllButton->setCursor(Qt::PointingHandCursor);
+    m_applyAllButton->setEnabled(false);
+    m_applyAllButton->setVisible(false);  // shown only when AUR helper exists
+    m_applyAllButton->setToolTip(QStringLiteral("Run: paru/yay -Syu (repo + AUR) in a terminal window"));
+    m_applyAllButton->setStyleSheet(QStringLiteral(
+        "QPushButton { background: %1; border: 1px solid %2; border-radius: 6px; "
+        "              color: %3; padding: 8px 14px; font-weight: 600; }"
+        "QPushButton:hover:enabled { background: %4; color: white; border-color: %4; }"
+        "QPushButton:disabled { color: %5; border-color: %6; }"
+    ).arg(Col::BgCard, Col::AccentGlow, Col::AccentGlow, Col::AccentGlow, Col::TextMuted, Col::Border));
+    updBtnRow->addWidget(m_applyAllButton);
+
+    updBtnRow->addStretch(1);
+
+    // Auto-check interval spinner
+    auto *intervalLabel = new QLabel(QStringLiteral("Auto-check every"), updatesBox);
+    intervalLabel->setStyleSheet(QStringLiteral("color: %1; font-size: 12px;").arg(Col::TextMuted));
+    m_updateIntervalSpin = new QSpinBox(updatesBox);
+    m_updateIntervalSpin->setRange(5, 180);
+    m_updateIntervalSpin->setValue(30);
+    m_updateIntervalSpin->setSuffix(QStringLiteral(" min"));
+    m_updateIntervalSpin->setToolTip(QStringLiteral("Background check interval (minutes)"));
+    m_updateIntervalSpin->setStyleSheet(QStringLiteral(
+        "QSpinBox { background: %1; border: 1px solid %2; border-radius: 6px; "
+        "           color: %3; padding: 4px 8px; }"
+    ).arg(Col::BgCard, Col::Border, Col::TextPrimary));
+    updBtnRow->addWidget(intervalLabel);
+    updBtnRow->addWidget(m_updateIntervalSpin);
+    updatesLayout->addLayout(updBtnRow);
+
+    // Live output log (terminal-style, hidden until apply starts)
+    m_updateOutputLog = new QPlainTextEdit(updatesBox);
+    m_updateOutputLog->setReadOnly(true);
+    m_updateOutputLog->setFixedHeight(130);
+    m_updateOutputLog->setVisible(false);
+    m_updateOutputLog->setStyleSheet(QStringLiteral(
+        "QPlainTextEdit { background: #050810; color: #a3e635; border: 1px solid %1; "
+        "                 border-radius: 6px; font-family: monospace; font-size: 11px; padding: 6px; }"
+    ).arg(Col::Border));
+    updatesLayout->addWidget(m_updateOutputLog);
+
     layout->addWidget(updatesBox);
 
     layout->addStretch(1);
@@ -1166,6 +1259,202 @@ QWidget *MainWindow::createDevHubPage()
     connect(m_uiDesignClearBtn, &QPushButton::clicked, this, &MainWindow::onClearUiDesignImage);
     connect(m_uiGenerateButton, &QPushButton::clicked, this, &MainWindow::onGenerateUiClicked);
 
+    return outer;
+}
+
+
+// ─────────────────────────────────────────────────────────────
+//  Settings Page
+// ─────────────────────────────────────────────────────────────
+QWidget *MainWindow::createSettingsPage()
+{
+    auto *outer = new QWidget(this);
+    auto *outerLayout = new QVBoxLayout(outer);
+    outerLayout->setContentsMargins(0, 0, 0, 0);
+    outerLayout->setSpacing(0);
+
+    // ── Header bar ──────────────────────────────────────────
+    auto *headerBar = new QWidget(outer);
+    headerBar->setFixedHeight(56);
+    headerBar->setStyleSheet(QStringLiteral(
+        "QWidget { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 %1,stop:1 %2); "
+        "border-bottom: 1px solid %3; }").arg(Col::BgCard, Col::BgDeep, Col::Border));
+    auto *headerLayout = new QHBoxLayout(headerBar);
+    headerLayout->setContentsMargins(20, 0, 20, 0);
+    auto *headerTitle = new QLabel(QStringLiteral("⚙  Settings"), headerBar);
+    headerTitle->setStyleSheet(QStringLiteral(
+        "QLabel { color: %1; font-size: 17px; font-weight: 700; border: none; background: transparent; }"
+    ).arg(Col::TextPrimary));
+    headerLayout->addWidget(headerTitle);
+    headerLayout->addStretch(1);
+    auto *headerSub = new QLabel(QStringLiteral("Application · Development · Updates"), headerBar);
+    headerSub->setStyleSheet(QStringLiteral(
+        "QLabel { color: %1; font-size: 11px; border: none; background: transparent; }"
+    ).arg(Col::TextMuted));
+    headerLayout->addWidget(headerSub);
+    outerLayout->addWidget(headerBar);
+
+    // ── Scroll area ─────────────────────────────────────────
+    auto *scrollArea = new QScrollArea(outer);
+    scrollArea->setWidgetResizable(true);
+    scrollArea->setFrameShape(QFrame::NoFrame);
+    scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    scrollArea->setStyleSheet(QStringLiteral(
+        "QScrollArea { background: %1; border: none; }").arg(Col::BgDeep));
+    auto *content = new QWidget(scrollArea);
+    content->setStyleSheet(QStringLiteral("background: %1;").arg(Col::BgDeep));
+    scrollArea->setWidget(content);
+    auto *layout = new QVBoxLayout(content);
+    layout->setContentsMargins(28, 24, 28, 32);
+    layout->setSpacing(16);
+
+    auto applyGroupStyle = [](QGroupBox *box) {
+        box->setStyleSheet(QStringLiteral(
+            "QGroupBox { background: %1; border: 1px solid %2; border-radius: 10px; "
+            "            margin-top: 18px; padding: 12px; } "
+            "QGroupBox::title { color: %3; subcontrol-origin: margin; left: 14px; "
+            "                    font-weight: 700; font-size: 13px; }"
+        ).arg(Col::BgCard, Col::Border, Col::TextPrimary));
+    };
+    auto applyEditStyle = [](QLineEdit *edit) {
+        edit->setStyleSheet(QStringLiteral(
+            "QLineEdit { background: %1; border: 1px solid %2; border-radius: 6px; "
+            "            color: %3; padding: 8px 10px; }"
+        ).arg(Col::BgInput, Col::Border, Col::TextPrimary));
+    };
+
+    // ── Application ─────────────────────────────────────────
+    auto *appBox = new QGroupBox(QStringLiteral("Application"), content);
+    applyGroupStyle(appBox);
+    auto *appLayout = new QVBoxLayout(appBox);
+    appLayout->setSpacing(10);
+
+    auto *modelRow = new QHBoxLayout;
+    auto *modelLbl = new QLabel(QStringLiteral("Active AI model:"), appBox);
+    modelLbl->setFixedWidth(140);
+    modelLbl->setStyleSheet(QStringLiteral("color: %1;").arg(Col::TextSecondary));
+    m_settingsModelLabel = new QLabel(m_agent.currentModel(), appBox);
+    m_settingsModelLabel->setStyleSheet(QStringLiteral(
+        "background: %1; border: 1px solid %2; border-radius: 6px; color: %3; "
+        "padding: 6px 12px; font-weight: 600;").arg(Col::BgCard, Col::Border, Col::AccentGlow));
+    auto *settingsModelBtn = new QPushButton(QStringLiteral("⚙ Switch Model..."), appBox);
+    settingsModelBtn->setCursor(Qt::PointingHandCursor);
+    settingsModelBtn->setStyleSheet(QStringLiteral(
+        "QPushButton { background: %1; border: 1px solid %2; border-radius: 6px; "
+        "              color: %3; padding: 6px 12px; font-weight: 600; }"
+        "QPushButton:hover { background: %4; color: white; border-color: %4; }"
+    ).arg(Col::BgCard, Col::Border, Col::Accent, Col::Accent));
+    modelRow->addWidget(modelLbl);
+    modelRow->addWidget(m_settingsModelLabel, 1);
+    modelRow->addWidget(settingsModelBtn);
+    appLayout->addLayout(modelRow);
+    connect(settingsModelBtn, &QPushButton::clicked, this, &MainWindow::onManageModels);
+
+    // ── Development ─────────────────────────────────────────
+    auto *devBox = new QGroupBox(QStringLiteral("Development"), content);
+    applyGroupStyle(devBox);
+    auto *devLayout = new QVBoxLayout(devBox);
+    devLayout->setSpacing(10);
+
+    auto *projectRow = new QHBoxLayout;
+    auto *projectLbl = new QLabel(QStringLiteral("Project directory:"), devBox);
+    projectLbl->setFixedWidth(140);
+    projectLbl->setStyleSheet(QStringLiteral("color: %1;").arg(Col::TextSecondary));
+    m_settingsProjectEdit = new QLineEdit(m_projectDirectory, devBox);
+    m_settingsProjectEdit->setPlaceholderText(QStringLiteral("e.g. /home/you/my-project"));
+    applyEditStyle(m_settingsProjectEdit);
+    auto *settingsBrowseBtn = new QPushButton(QStringLiteral("Browse…"), devBox);
+    settingsBrowseBtn->setCursor(Qt::PointingHandCursor);
+    settingsBrowseBtn->setStyleSheet(QStringLiteral(
+        "QPushButton { background: %1; border: 1px solid %2; border-radius: 6px; color: %3; padding: 6px 12px; }"
+        "QPushButton:hover { background: %4; }").arg(Col::BgCard, Col::Border, Col::TextSecondary, Col::Accent));
+    projectRow->addWidget(projectLbl);
+    projectRow->addWidget(m_settingsProjectEdit, 1);
+    projectRow->addWidget(settingsBrowseBtn);
+    devLayout->addLayout(projectRow);
+    connect(settingsBrowseBtn, &QPushButton::clicked, this, &MainWindow::onSettingsBrowseProject);
+
+    auto *buildRow = new QHBoxLayout;
+    auto *buildLbl = new QLabel(QStringLiteral("Build command:"), devBox);
+    buildLbl->setFixedWidth(140);
+    buildLbl->setStyleSheet(QStringLiteral("color: %1;").arg(Col::TextSecondary));
+    m_settingsBuildEdit = new QLineEdit(m_buildCommand, devBox);
+    m_settingsBuildEdit->setPlaceholderText(QStringLiteral("cmake --build build   |   npm run build"));
+    applyEditStyle(m_settingsBuildEdit);
+    buildRow->addWidget(buildLbl);
+    buildRow->addWidget(m_settingsBuildEdit, 1);
+    devLayout->addLayout(buildRow);
+
+    m_settingsAutoFixCheck = new QCheckBox(
+        QStringLiteral("Enable Auto-Fix for build errors"), devBox);
+    m_settingsAutoFixCheck->setStyleSheet(QStringLiteral(
+        "QCheckBox { color: %1; } QCheckBox::indicator { width: 16px; height: 16px; }"
+    ).arg(Col::TextSecondary));
+    m_settingsAutoFixCheck->setChecked(m_agent.autoFixEnabled());
+    devLayout->addWidget(m_settingsAutoFixCheck);
+
+    // ── Updates ─────────────────────────────────────────────
+    auto *updatesBox = new QGroupBox(QStringLiteral("Updates"), content);
+    applyGroupStyle(updatesBox);
+    auto *updatesLayout = new QVBoxLayout(updatesBox);
+    updatesLayout->setSpacing(10);
+
+    auto *intervalRow = new QHBoxLayout;
+    auto *intervalLbl = new QLabel(QStringLiteral("Background update check:"), updatesBox);
+    intervalLbl->setStyleSheet(QStringLiteral("color: %1;").arg(Col::TextSecondary));
+    m_settingsIntervalSpin = new QSpinBox(updatesBox);
+    m_settingsIntervalSpin->setRange(5, 180);
+    m_settingsIntervalSpin->setValue(m_updateIntervalSpin ? m_updateIntervalSpin->value() : 30);
+    m_settingsIntervalSpin->setSuffix(QStringLiteral(" min"));
+    m_settingsIntervalSpin->setStyleSheet(QStringLiteral(
+        "QSpinBox { background: %1; border: 1px solid %2; border-radius: 6px; color: %3; padding: 6px 8px; }"
+    ).arg(Col::BgInput, Col::Border, Col::TextPrimary));
+    intervalRow->addWidget(intervalLbl);
+    intervalRow->addWidget(m_settingsIntervalSpin);
+    intervalRow->addStretch(1);
+    updatesLayout->addLayout(intervalRow);
+
+    // ── Voice & Calendar launchers ──────────────────────────
+    auto *accessBox = new QGroupBox(QStringLiteral("Voice & Calendar"), content);
+    applyGroupStyle(accessBox);
+    auto *accessLayout = new QHBoxLayout(accessBox);
+    accessLayout->setSpacing(12);
+    auto *voiceBtn = new QPushButton(QStringLiteral("🎙  Voice Settings"), accessBox);
+    auto *calBtn = new QPushButton(QStringLiteral("📅  Calendar Settings"), accessBox);
+    for (QPushButton *btn : {voiceBtn, calBtn}) {
+        btn->setCursor(Qt::PointingHandCursor);
+        btn->setStyleSheet(QStringLiteral(
+            "QPushButton { background: %1; color: white; border: none; border-radius: 8px; "
+            "padding: 10px 18px; font-weight: 600; }"
+            "QPushButton:hover { background: %2; }").arg(Col::Accent, Col::AccentGlow));
+    }
+    accessLayout->addWidget(voiceBtn);
+    accessLayout->addWidget(calBtn);
+    accessLayout->addStretch(1);
+    connect(voiceBtn, &QPushButton::clicked, this, &MainWindow::onVoiceSettings);
+    connect(calBtn, &QPushButton::clicked, this, &MainWindow::onOpenCalendarSettings);
+
+    layout->addWidget(appBox);
+    layout->addWidget(devBox);
+    layout->addWidget(updatesBox);
+    layout->addWidget(accessBox);
+
+    // ── Save bar ────────────────────────────────────────────
+    m_settingsStatusLabel = new QLabel(content);
+    m_settingsStatusLabel->setStyleSheet(QStringLiteral("color: %1; font-size: 12px;").arg(Col::TextMuted));
+    auto *saveBtn = new QPushButton(QStringLiteral("💾 Save Settings"), content);
+    saveBtn->setCursor(Qt::PointingHandCursor);
+    saveBtn->setStyleSheet(QStringLiteral(
+        "QPushButton { background: %1; color: white; border: none; border-radius: 8px; "
+        "padding: 10px 24px; font-weight: 700; font-size: 14px; }"
+        "QPushButton:hover { background: %2; }").arg(Col::Accent, Col::AccentGlow));
+    connect(saveBtn, &QPushButton::clicked, this, &MainWindow::onSaveSettings);
+    layout->addWidget(m_settingsStatusLabel);
+    layout->addStretch(1);
+    layout->addWidget(saveBtn, 0, Qt::AlignRight);
+
+    outerLayout->addWidget(scrollArea, 1);
     return outer;
 }
 
@@ -1367,6 +1656,7 @@ MainWindow::MainWindow(QWidget *parent)
     m_pageStack->addWidget(createWelcomePage());   // 0
     m_pageStack->addWidget(createChatPage());       // 1
     m_pageStack->addWidget(createDevHubPage());     // 2
+    m_pageStack->addWidget(createSettingsPage());   // 3
     mainHLayout->addWidget(m_pageStack, 1);
 
     setCentralWidget(central);
@@ -1398,11 +1688,13 @@ MainWindow::MainWindow(QWidget *parent)
             });
     connect(&m_agent, &Agent::modelReady, this, &MainWindow::onModelReady);
     connect(&m_agent, &Agent::modelError, this, &MainWindow::onModelError);
+    connect(&m_agent, &Agent::modelsChanged, this, &MainWindow::onModelsChanged);
 
     // Restore settings
     m_projectDirectory = m_settings.value(QStringLiteral("projectDir")).toString();
     m_buildCommand = m_settings.value(QStringLiteral("buildCommand")).toString();
     const bool autoFixEnabled = m_settings.value(QStringLiteral("autoFixEnabled"), false).toBool();
+    const int updateInterval = m_settings.value(QStringLiteral("updateInterval"), 30).toInt();
 
     m_autoFixCheck->setChecked(autoFixEnabled);
     m_projectEdit->setText(m_projectDirectory);
@@ -1410,6 +1702,26 @@ MainWindow::MainWindow(QWidget *parent)
     m_agent.setAutoFixEnabled(autoFixEnabled);
     m_agent.setProjectDirectory(m_projectDirectory);
     m_agent.setBuildCommand(m_buildCommand);
+
+    // Keep the Settings page in sync with the restored/Dev Hub state.
+    if (m_updateIntervalSpin) {
+        m_updateIntervalSpin->setValue(updateInterval);
+    }
+    if (m_settingsProjectEdit) {
+        m_settingsProjectEdit->setText(m_projectDirectory);
+    }
+    if (m_settingsBuildEdit) {
+        m_settingsBuildEdit->setText(m_buildCommand);
+    }
+    if (m_settingsAutoFixCheck) {
+        m_settingsAutoFixCheck->setChecked(autoFixEnabled);
+    }
+    if (m_settingsIntervalSpin) {
+        m_settingsIntervalSpin->setValue(updateInterval);
+    }
+    if (m_settingsModelLabel) {
+        m_settingsModelLabel->setText(m_agent.currentModel());
+    }
 
     connect(m_autoFixCheck, &QCheckBox::toggled, this, [this](bool checked) {
         m_settings.setValue(QStringLiteral("autoFixEnabled"), checked);
@@ -1477,30 +1789,47 @@ MainWindow::MainWindow(QWidget *parent)
                 m_diskCleanupButton->setEnabled(true);
                 appendMessage(QStringLiteral("Error"), error, Col::Danger);
             });
-    connect(m_checkUpdatesButton, &QPushButton::clicked, this, &MainWindow::onCheckUpdatesClicked);
+    connect(m_checkUpdatesButton, &QPushButton::clicked,   this, &MainWindow::onCheckUpdatesClicked);
+    connect(m_applyRepoButton,    &QPushButton::clicked,   this, &MainWindow::onApplyRepoUpdatesClicked);
+    connect(m_applyAllButton,     &QPushButton::clicked,   this, &MainWindow::onApplyAllUpdatesClicked);
 
-    // Update checker
+    // Update checker signals
     UpdateChecker &updateChecker = m_agent.updateChecker();
-    connect(&updateChecker, &UpdateChecker::checkStarted, this,
-            [this]() {
-                m_checkUpdatesButton->setEnabled(false);
-                navigateTo(1); // Switch to chat to show results
-                appendPlainLine(
-                    QStringLiteral("Checking installed packages against the repositories..."),
-                    Col::TextMuted);
+    connect(&updateChecker, &UpdateChecker::checkStarted,  this, [this]() {
+        m_checkUpdatesButton->setEnabled(false);
+        m_applyRepoButton->setEnabled(false);
+        m_applyAllButton->setEnabled(false);
+        m_updateProgressBar->setVisible(true);
+        m_updateStatusLabel->setText(QStringLiteral("Checking..."));
+        m_updateCountBadge->setVisible(false);
+    });
+    connect(&updateChecker, &UpdateChecker::checkProgress, this, &MainWindow::onUpdateCheckProgress);
+    connect(&updateChecker, &UpdateChecker::checkFinished, this, &MainWindow::onUpdateCheckFinished);
+    connect(&updateChecker, &UpdateChecker::checkError,    this, &MainWindow::onUpdateCheckError);
+    connect(&updateChecker, &UpdateChecker::updatesApplyStarted, this, &MainWindow::onUpdatesApplyStarted);
+    connect(&updateChecker, &UpdateChecker::updatesApplyOutput,  this, &MainWindow::onUpdatesApplyOutput);
+    connect(&updateChecker, &UpdateChecker::updatesApplyFinished,this, &MainWindow::onUpdatesApplyFinished);
+    connect(&updateChecker, &UpdateChecker::periodicCheckDone,   this, &MainWindow::onPeriodicUpdateCheckDone);
+
+    // Interval spinner changes restart periodic timer
+    connect(m_updateIntervalSpin, QOverload<int>::of(&QSpinBox::valueChanged), this,
+            [this](int minutes) {
+                m_agent.updateChecker().startPeriodicCheck(minutes);
             });
-    connect(&updateChecker, &UpdateChecker::checkFinished, this,
-            [this](int) {
-                m_checkUpdatesButton->setEnabled(true);
-                appendMessage(QStringLiteral("TitanAI"),
-                              m_agent.updateChecker().formatUpdateReport(),
-                              Col::AccentGlow);
-            });
-    connect(&updateChecker, &UpdateChecker::checkError, this,
-            [this](const QString &error) {
-                m_checkUpdatesButton->setEnabled(true);
-                appendMessage(QStringLiteral("Error"), error, Col::Danger);
-            });
+
+    // Setup system tray icon for popup notifications
+    if (QSystemTrayIcon::isSystemTrayAvailable()) {
+        m_trayIcon = new QSystemTrayIcon(this);
+        m_trayIcon->setIcon(QIcon::fromTheme(QStringLiteral("system-software-update"),
+                                             QIcon(QStringLiteral(":/icons/logo.png"))));
+        m_trayIcon->setToolTip(QStringLiteral("TitanAI"));
+        m_trayIcon->show();
+        connect(m_trayIcon, &QSystemTrayIcon::messageClicked, this, [this]() {
+            activateWindow();
+            raise();
+            navigateTo(2); // jump to Dev Hub
+        });
+    }
     connect(&m_agent, &Agent::autoFixEnabledChanged, this, [this](bool enabled) {
         m_settings.setValue(QStringLiteral("autoFixEnabled"), enabled);
         const QSignalBlocker blocker(m_autoFixCheck);
@@ -1631,6 +1960,7 @@ void MainWindow::onModelReady(const QString &model)
 {
     m_modelReady = true;
     m_statusLabel->setText(QStringLiteral("✦ Model ready: %1").arg(model));
+    updateModelLabels(model);
     appendMessage(QStringLiteral("TitanAI"),
                   QStringLiteral("Local AI model '%1' is ready. Ask me anything about your "
                                  "system, or just chat!")
@@ -1641,6 +1971,10 @@ void MainWindow::onModelReady(const QString &model)
     m_agent.startLearning();
     m_agent.startCalendar();
     m_agent.calendarManager().setAutoRefresh(true);
+
+    // Start background update check (30 min interval)
+    m_agent.updateChecker().startPeriodicCheck(
+        m_updateIntervalSpin ? m_updateIntervalSpin->value() : 30);
 
     QTimer::singleShot(2000, this, [this]() {
         const QString suggestions = m_agent.getStartupSuggestions();
@@ -1750,10 +2084,82 @@ void MainWindow::onBrowseProject()
     if (directory.isEmpty()) {
         return;
     }
+    applyProjectDirectory(directory);
+}
+
+void MainWindow::onSettingsBrowseProject()
+{
+    const QString startDir =
+        m_projectDirectory.isEmpty() ? QDir::homePath() : m_projectDirectory;
+    const QString directory = QFileDialog::getExistingDirectory(
+        this, QStringLiteral("Select Project Directory"), startDir);
+    if (directory.isEmpty()) {
+        return;
+    }
+    applyProjectDirectory(directory);
+}
+
+// Applies a chosen project directory across the app state, Dev Hub and Settings.
+void MainWindow::applyProjectDirectory(const QString &directory)
+{
     m_projectDirectory = directory;
-    m_projectEdit->setText(directory);
+    if (m_projectEdit) {
+        m_projectEdit->setText(directory);
+    }
+    if (m_settingsProjectEdit) {
+        m_settingsProjectEdit->setText(directory);
+    }
     m_settings.setValue(QStringLiteral("projectDir"), directory);
     m_agent.setProjectDirectory(directory);
+}
+
+void MainWindow::onSaveSettings()
+{
+    // Project directory
+    if (m_settingsProjectEdit) {
+        const QString dir = m_settingsProjectEdit->text().trimmed();
+        applyProjectDirectory(dir);
+    }
+
+    // Build command
+    if (m_settingsBuildEdit) {
+        m_buildCommand = m_settingsBuildEdit->text().trimmed();
+        m_settings.setValue(QStringLiteral("buildCommand"), m_buildCommand);
+        m_agent.setBuildCommand(m_buildCommand);
+        if (m_buildEdit) {
+            m_buildEdit->setText(m_buildCommand);
+        }
+    }
+
+    // Auto-fix
+    const bool autoFix = m_settingsAutoFixCheck ? m_settingsAutoFixCheck->isChecked() : m_agent.autoFixEnabled();
+    m_agent.setAutoFixEnabled(autoFix);
+    m_settings.setValue(QStringLiteral("autoFixEnabled"), autoFix);
+    if (m_autoFixCheck) {
+        const QSignalBlocker blocker(m_autoFixCheck);
+        m_autoFixCheck->setChecked(autoFix);
+    }
+
+    // Update check interval
+    const int interval = m_settingsIntervalSpin ? m_settingsIntervalSpin->value() : 30;
+    if (m_updateIntervalSpin) {
+        const QSignalBlocker blocker(m_updateIntervalSpin);
+        m_updateIntervalSpin->setValue(interval);
+    }
+    m_settings.setValue(QStringLiteral("updateInterval"), interval);
+    m_agent.updateChecker().startPeriodicCheck(interval);
+
+    // Sync model label
+    updateModelLabels(m_agent.currentModel());
+
+    if (m_settingsStatusLabel) {
+        m_settingsStatusLabel->setText(QStringLiteral("✓ Settings saved at %1")
+            .arg(QTime::currentTime().toString(QStringLiteral("HH:mm:ss"))));
+    }
+
+    appendMessage(QStringLiteral("TitanAI"),
+                  QStringLiteral("⚙️ Settings saved. Active model: `%1`.").arg(m_agent.currentModel()),
+                  Col::AccentGlow);
 }
 
 void MainWindow::onBuildAndFixClicked()
@@ -1808,9 +2214,143 @@ void MainWindow::onDiskCleanupClicked()
 void MainWindow::onCheckUpdatesClicked()
 {
     if (m_agent.updateChecker().isChecking()) {
+        m_updateStatusLabel->setText(QStringLiteral("Already checking, please wait..."));
         return;
     }
     m_agent.updateChecker().startCheck();
+}
+
+void MainWindow::onApplyRepoUpdatesClicked()
+{
+    if (m_agent.updateChecker().isApplying()) return;
+    m_updateOutputLog->clear();
+    m_agent.updateChecker().applyUpdates(false);
+}
+
+void MainWindow::onApplyAllUpdatesClicked()
+{
+    if (m_agent.updateChecker().isApplying()) return;
+    m_updateOutputLog->clear();
+    m_agent.updateChecker().applyUpdates(true);
+}
+
+void MainWindow::onUpdateCheckProgress(const QString &stage)
+{
+    if (m_updateStatusLabel)
+        m_updateStatusLabel->setText(stage);
+}
+
+void MainWindow::onUpdateCheckFinished(int count)
+{
+    m_updateProgressBar->setVisible(false);
+    m_checkUpdatesButton->setEnabled(true);
+
+    const QString lastChecked = QStringLiteral("Last checked: %1")
+        .arg(m_agent.updateChecker().lastCheckTimeString());
+
+    if (count == 0) {
+        m_updateStatusLabel->setText(
+            QStringLiteral("%1  |  ✅ All up to date").arg(lastChecked));
+        m_updateCountBadge->setVisible(false);
+        m_applyRepoButton->setEnabled(false);
+        m_applyAllButton->setEnabled(false);
+    } else {
+        m_updateStatusLabel->setText(
+            QStringLiteral("%1  |  %2 update(s) available").arg(lastChecked).arg(count));
+
+        // Red badge
+        m_updateCountBadge->setText(QString::number(qMin(count, 99)));
+        m_updateCountBadge->setVisible(true);
+
+        // Enable apply buttons
+        m_applyRepoButton->setEnabled(true);
+        if (m_agent.updateChecker().aurHelperAvailable()) {
+            m_applyAllButton->setEnabled(true);
+            m_applyAllButton->setVisible(true);
+        }
+
+        // Show in chat too
+        navigateTo(1);
+        appendMessage(QStringLiteral("TitanAI"),
+                      m_agent.updateChecker().formatUpdateReport(),
+                      Col::AccentGlow);
+    }
+}
+
+void MainWindow::onUpdateCheckError(const QString &error)
+{
+    m_updateProgressBar->setVisible(false);
+    m_checkUpdatesButton->setEnabled(true);
+    m_updateStatusLabel->setText(QStringLiteral("⚠️ Error: %1").arg(error));
+    appendMessage(QStringLiteral("Error"), error, Col::Danger);
+}
+
+void MainWindow::onUpdatesApplyStarted(const QString &command)
+{
+    m_applyRepoButton->setEnabled(false);
+    m_applyAllButton->setEnabled(false);
+    m_updateOutputLog->setVisible(true);
+    m_updateOutputLog->appendPlainText(
+        QStringLiteral("$ %1").arg(command));
+}
+
+void MainWindow::onUpdatesApplyOutput(const QString &line)
+{
+    if (m_updateOutputLog) {
+        m_updateOutputLog->appendPlainText(line);
+        // Auto-scroll to bottom
+        QScrollBar *sb = m_updateOutputLog->verticalScrollBar();
+        if (sb) sb->setValue(sb->maximum());
+    }
+}
+
+void MainWindow::onUpdatesApplyFinished(bool success)
+{
+    const int count = m_agent.updateChecker().pendingUpdates().size();
+    m_applyRepoButton->setEnabled(count > 0);
+    if (m_agent.updateChecker().aurHelperAvailable())
+        m_applyAllButton->setEnabled(count > 0);
+
+    const QString msg = success
+        ? QStringLiteral("✅ Updates applied successfully!")
+        : QStringLiteral("⚠️ Update process finished (check the terminal window for details).");
+    m_updateOutputLog->appendPlainText(msg);
+    appendMessage(QStringLiteral("TitanAI"), msg, success ? Col::AccentGlow : Col::Warning);
+
+    // Re-check to refresh the list
+    QTimer::singleShot(2000, this, [this]() {
+        m_agent.updateChecker().startCheck();
+    });
+}
+
+void MainWindow::onPeriodicUpdateCheckDone(int count)
+{
+    if (count <= 0) return; // Nothing to notify
+
+    // System tray popup notification
+    if (m_trayIcon && m_trayIcon->supportsMessages()) {
+        m_trayIcon->showMessage(
+            QStringLiteral("TitanAI – Updates Available 🔄"),
+            QStringLiteral("%1 package update(s) available. Click to view.").arg(count),
+            QSystemTrayIcon::Information,
+            8000  // show for 8 seconds
+        );
+    }
+
+    // Also update the badge without switching pages (user may be mid-task)
+    if (m_updateCountBadge) {
+        m_updateCountBadge->setText(QString::number(qMin(count, 99)));
+        m_updateCountBadge->setVisible(true);
+    }
+    if (m_updateStatusLabel) {
+        m_updateStatusLabel->setText(
+            QStringLiteral("Last checked: %1  |  %2 update(s) available")
+                .arg(m_agent.updateChecker().lastCheckTimeString())
+                .arg(count));
+    }
+    if (m_applyRepoButton) m_applyRepoButton->setEnabled(true);
+    if (m_applyAllButton && m_agent.updateChecker().aurHelperAvailable())
+        m_applyAllButton->setEnabled(true);
 }
 
 void MainWindow::startStreamingBlock()
@@ -2320,23 +2860,49 @@ void MainWindow::onUiDevelopmentFinished(bool success, const QString &summary, c
     setInputEnabled(true);
 }
 
-void MainWindow::onModelChanged(int index)
+void MainWindow::onManageModels()
 {
-    if (!m_aiModelCombo) {
-        return;
-    }
-    const QString selectedModel = m_aiModelCombo->itemData(index).toString();
-    if (selectedModel.isEmpty() || selectedModel == m_agent.currentModel()) {
-        return;
-    }
+    // Refresh the installed model list from the local Ollama server first so
+    // the dialog always shows the current state.
+    m_agent.refreshModels();
 
-    // Unload old model to reclaim RAM before switching
-    m_agent.unloadModel();
-    m_agent.setModel(selectedModel);
+    ModelDialog dialog(m_agent.currentModel(), m_agent.installedModels(), this);
 
-    appendMessage(QStringLiteral("TitanAI"),
-                  QStringLiteral("Switched active AI model to `%1`.").arg(selectedModel),
-                  Col::AccentGlow);
+    // Keep the dialog's installed list in sync with the live fetch/short-return.
+    connect(&m_agent, &Agent::modelsChanged, &dialog, &ModelDialog::setInstalledModels);
+    connect(&dialog, &ModelDialog::refreshRequested, &m_agent, &Agent::refreshModels);
+
+    if (dialog.exec() == QDialog::Accepted) {
+        const QString selectedModel = dialog.selectedModel();
+        if (selectedModel.isEmpty() || selectedModel == m_agent.currentModel()) {
+            return;
+        }
+
+        // Unload + re-point the client + ensure the new model is loaded in RAM.
+        m_agent.switchModel(selectedModel);
+        updateModelLabels(selectedModel);
+
+        appendMessage(QStringLiteral("TitanAI"),
+                      QStringLiteral("Switched active AI model to `%1`. Loading it...")
+                          .arg(selectedModel),
+                      Col::AccentGlow);
+    }
+}
+
+void MainWindow::updateModelLabels(const QString &model)
+{
+    if (m_aiModelLabel) {
+        m_aiModelLabel->setText(model);
+    }
+    if (m_settingsModelLabel) {
+        m_settingsModelLabel->setText(model);
+    }
+}
+
+void MainWindow::onModelsChanged(const QStringList &models)
+{
+    Q_UNUSED(models);
+    updateModelLabels(m_agent.currentModel());
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)

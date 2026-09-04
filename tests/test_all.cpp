@@ -79,7 +79,8 @@ private slots:
 
         QString error;
         bool ok = CodeFixer::applyEdit(testFile, edit, &error);
-        QVERIFY2(ok, error.toUtf8().constData());
+        QByteArray errorBytes = error.toUtf8();
+        QVERIFY2(ok, errorBytes.constData());
 
         // Verify content
         QFile f(testFile);
@@ -190,7 +191,8 @@ private slots:
 
         qApp->exec();
 
-        QVERIFY2(errorMsg.isEmpty(), errorMsg.toUtf8().constData());
+        QByteArray errBytes = errorMsg.toUtf8();
+        QVERIFY2(errorMsg.isEmpty(), errBytes.constData());
         QVERIFY2(received, "Timed out waiting for completion response");
         std::cout << "[PASS] Non-streaming Response: " << receivedResponse.left(80).toStdString() << std::endl;
     }
@@ -238,18 +240,30 @@ private slots:
 
     void testUpdateCheckerStructure() {
         UpdateChecker uc;
-        // Verify initial state (API available on main branch)
+        // Verify initial state
         QVERIFY(!uc.isChecking());
+        QVERIFY(!uc.isApplying());
+        QVERIFY(!uc.isPeriodicCheckActive());
+        QVERIFY(!uc.lastCheckTime().isValid());
+        QCOMPARE(uc.lastCheckTimeString(), QStringLiteral("Never"));
         QCOMPARE(uc.installedPackageCount(), 0);
         QVERIFY(uc.pendingUpdates().isEmpty());
-        std::cout << "[PASS] UpdateChecker structure and initial state" << std::endl;
+        // Periodic check control
+        uc.startPeriodicCheck(60);
+        QVERIFY(uc.isPeriodicCheckActive());
+        uc.stopPeriodicCheck();
+        QVERIFY(!uc.isPeriodicCheckActive());
+        std::cout << "[PASS] UpdateChecker structure and periodic check API" << std::endl;
     }
 
     void testUpdateCheckerReport() {
         UpdateChecker uc;
         // Empty state report
         const QString emptyReport = uc.formatUpdateReport();
-        QVERIFY(!emptyReport.isEmpty());
+        // Once installed list is empty the report should indicate 0 installed
+        QVERIFY(emptyReport.contains(QStringLiteral("Installed packages: 0")));
+        QVERIFY(emptyReport.contains(QStringLiteral("up to date")) ||
+                emptyReport.contains(QStringLiteral("packages: 0")));
         std::cout << "[PASS] UpdateChecker empty report: " << emptyReport.left(60).toStdString() << std::endl;
     }
 

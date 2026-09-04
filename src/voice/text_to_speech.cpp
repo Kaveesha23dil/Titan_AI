@@ -1,5 +1,6 @@
 #include "voice/text_to_speech.hpp"
 
+#include <QLibrary>
 #include <QLocale>
 #include <QStandardPaths>
 #include <QTextToSpeech>
@@ -11,30 +12,80 @@ TextToSpeech::TextToSpeech(QObject *parent)
     : QObject(parent)
 {
     const QStringList engines = QTextToSpeech::availableEngines();
-    if (!engines.isEmpty()) {
-        m_tts = new QTextToSpeech(engines.first(), this);
-        if (!m_tts->availableVoices().isEmpty()) {
-            m_engineName = engines.first();
-            connect(m_tts, &QTextToSpeech::stateChanged, this,
-                    [this](QTextToSpeech::State state) {
-                        setSpeakingState(state == QTextToSpeech::Speaking);
-                    });
 
-            const QList<QVoice> voices = m_tts->availableVoices();
-            for (const QVoice &voice : voices) {
-                VoiceInfo info;
-                info.id = voice.name();
-                info.name = voice.name();
-                info.language = QLocale::languageToString(voice.language());
-                m_voices.append(info);
+    // Prefer a reliable, non-crashing engine. The Qt "flite" plugin can hard
+    // crash at construction time when its runtime library (libflite) is absent,
+    // so we validate an engine's runtime deps before ever constructing it.
+    const QStringList order = {QStringLiteral("speechd"),
+                               QStringLiteral("speech-dispatcher"),
+                               QStringLiteral("flite")};
+    const auto tryOrdered = [&](const QString &name) {
+        for (const QString &engine : engines) {
+            if (engine.compare(name, Qt::CaseInsensitive) == 0) {
+                return true;
             }
+        }
+        return false;
+    };
+    for (const QString &candidate : order) {
+        if (tryOrdered(candidate) && tryInitEngine(candidate)) {
             return;
         }
-        delete m_tts;
-        m_tts = nullptr;
+    }
+
+    // Fall back to any remaining engine that passes runtime checks.
+    for (const QString &engine : engines) {
+        if (tryInitEngine(engine)) {
+            return;
+        }
     }
 
     useEspeakFallback();
+}
+
+bool TextToSpeech::engineRuntimeAvailable(const QString &engine) const
+{
+    // The Qt "flite" plugin requires libflite.so.1 at runtime; if it's missing,
+    // constructing the engine hard-crashes. Refuse to construct it in that case.
+    if (engine.compare(QStringLiteral("flite"), Qt::CaseInsensitive) == 0) {
+        QLibrary lib(QStringLiteral("libflite.so.1"));
+        return lib.load();
+    }
+    return true;
+}
+
+bool TextToSpeech::tryInitEngine(const QString &engine)
+{
+    if (!engineRuntimeAvailable(engine)) {
+        emit engineError(QStringLiteral("Text-to-speech backend '%1' is not available "
+                                        "(missing runtime library). Falling back.").arg(engine));
+        return false;
+    }
+
+    QTextToSpeech *tts = new QTextToSpeech(engine, this);
+    // Guard against an engine that reports no usable voices (e.g. no synthesizer
+    // running behind speech-dispatcher). Treat it as unusable.
+    if (tts->availableVoices().isEmpty()) {
+        delete tts;
+        return false;
+    }
+
+    m_tts = tts;
+    m_engineName = engine;
+    connect(m_tts, &QTextToSpeech::stateChanged, this,
+            [this](QTextToSpeech::State state) {
+                setSpeakingState(state == QTextToSpeech::Speaking);
+            });
+
+    const QList<QVoice> voices = m_tts->availableVoices();
+    for (const QVoice &voice : voices) {
+        VoiceInfo info;
+        info.id = voice.name();
+        info.name = voice.name();
+        info.language = QLocale::languageToString(voice.language());
+        m_voices.append(info);
+    }
+    return true;
 }
 
 TextToSpeech::~TextToSpeech()
@@ -151,6 +202,15 @@ void TextToSpeech::speakEspeak(const QString &text)
     const int rateWordsPerMinute = qRound(150.0 + m_rate * 80.0);
     const int pitch = qBound(0, qRound(50.0 + m_pitch * 50.0), 99);
     const int amplitude = qBound(0, qRound(100.0 + m_volume * 100.0), 200);
+
+    // Verify espeak-ng is actually installed before starting. If it is missing
+    // we must not set the speaking state: no `finished` would ever fire and
+    // m_speaking would be stuck true forever (blocking wake-word re-activation).
+    if (QStandardPaths::findExecutable(QStringLiteral("espeak-ng")).isEmpty() ||
+        m_espeak->state() != QProcess::NotRunning) {
+        qWarning("TextToSpeech: espeak-ng not available or busy; skipping speech.");
+        return;
+    }
 
     m_espeak->start(QStringLiteral("espeak-ng"),
                     {QStringLiteral("-v"), m_espeakVoice,

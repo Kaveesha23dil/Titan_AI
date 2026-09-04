@@ -43,6 +43,8 @@ signals:
 
 private:
     void useEspeakFallback();
+    bool tryInitEngine(const QString &engine);
+    bool engineRuntimeAvailable(const QString &engine) const;
     void setSpeakingState(bool speaking);
     void speakEspeak(const QString &text);
     void onProcessFinished(int exitCode, QProcess::ExitStatus exitStatus);

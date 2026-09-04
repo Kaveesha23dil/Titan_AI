@@ -124,6 +124,11 @@ void PackageManager::readOutput()
 
 void PackageManager::onProcessFinished(int exitCode, QProcess::ExitStatus exitStatus)
 {
+    if (m_process) {
+        m_process->deleteLater();
+        m_process = nullptr;
+    }
+
     if (exitStatus == QProcess::CrashExit || exitCode != 0) {
         emitResult(false, buildSummary(false));
         return;

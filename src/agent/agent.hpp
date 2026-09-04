@@ -35,7 +35,10 @@ public:
     void sendImageMessage(const QImage &image, const QString &text);
     void initializeModel(const QString &model);
     void setModel(const QString &model);
+    void switchModel(const QString &model);
+    void refreshModels();
     [[nodiscard]] QString currentModel() const;
+    [[nodiscard]] QStringList installedModels() const;
     void unloadModel();
     void performInstall(const QStringList &packages);
     void setAutoFixEnabled(bool enabled);
@@ -83,6 +86,7 @@ signals:
     void modelStatusChanged(OllamaManager::Status status, const QString &message);
     void modelReady(const QString &model);
     void modelError(const QString &error);
+    void modelsChanged(const QStringList &models);
     void installRequested(const QStringList &packages);
     void cameraRequested();
     void toolOutputReceived(const QString &line);

@@ -6,6 +6,7 @@
 #include <QStandardPaths>
 #include <QStorageInfo>
 #include <algorithm>
+#include <limits>
 
 namespace {
 
@@ -365,7 +366,11 @@ quint64 DiskCleanup::parseJournalUsage(const QString &output)
         multiplier = 1024ULL * 1024ULL * 1024ULL * 1024ULL;
     }
 
-    return static_cast<quint64>(value * static_cast<double>(multiplier));
+    const long double scaled = value * static_cast<long double>(multiplier);
+    if (scaled > static_cast<long double>(std::numeric_limits<quint64>::max())) {
+        return 0; // avoid undefined/out-of-range float->integer conversion
+    }
+    return static_cast<quint64>(scaled);
 }
 
 void DiskCleanup::checkCompletion()
