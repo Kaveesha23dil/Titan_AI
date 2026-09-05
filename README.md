@@ -107,6 +107,29 @@ Exports include message timestamps, sender labels, and image-attached markers.
 MD files are plain Markdown; PDFs are paginated A4 documents with a clean
 print-oriented theme generated locally — nothing is uploaded anywhere.
 
+## Meeting Notes (Record & Summarize)
+
+Capture a meeting with the microphone, transcribe it live, take typed notes,
+then generate a local AI summary and export the whole thing:
+
+- **Record & transcribe** — click the **Record Meeting** sidebar button (or press
+  **Ctrl+M**). Speech is captured continuously and transcribed utterance-by-utterance
+  with Vosk; speak for as long as you like, then press **Stop Meeting**.
+- **Manual notes** — type notes anytime in the "Add note" field, even without a
+  microphone; they are merged into the transcript with a 📝 marker.
+- **Generate Summary** — the accumulated transcript is summarized by the local
+  Ollama model (the current chat model) into suggested title, key points,
+  decisions, action items, and open questions.
+- **Send Summary to Chat** — drop the summary directly into the active chat and
+  chat history.
+- **Export** — save the meeting as **Markdown** (`.md`) or **PDF** (`.pdf`),
+  including the summary block and every timestamped entry. Everything runs
+  locally.
+
+> **Note:** Live transcription requires Vosk to be installed and rebuilt
+> (see [Voice Features](#voice-features)). Without it, Meeting Notes still works
+> as a manual note-taker and summarizer.
+
 ## Voice Features
 
 TitanAI includes a fully local voice assistant built on top of the chat GUI:

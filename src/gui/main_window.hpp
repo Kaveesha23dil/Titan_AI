@@ -10,6 +10,7 @@
 #include "voice/voice_engine.hpp"
 #include "gui/chat_history_dialog.hpp"
 #include "gui/translation_dialog.hpp"
+#include "gui/meeting_notes_dialog.hpp"
 
 class QCheckBox;
  class QComboBox;
@@ -76,6 +77,8 @@ private slots:
     void onOpenTranslationAssistant();
     void onTranslateSelectedText();
     void onTranslationSendToChat(const QString &text);
+    void onOpenMeetingNotes();
+    void onMeetingSendToChat(const QString &text);
 
     // Power Management slots
     void onPowerProfileChanged(int index);
@@ -171,6 +174,9 @@ private:
     QPushButton   *m_navHistory{nullptr};  ///< Sidebar history button (🕐)
     // --- Translation ---
     QPushButton   *m_navTranslate{nullptr}; ///< Sidebar translation button (🌐)
+    // --- Meeting Notes ---
+    QPushButton   *m_navMeeting{nullptr};  ///< Sidebar meeting notes button
+    MeetingNotesDialog *m_meetingDialog{nullptr}; ///< Single non-modal instance
 
     // --- Shared Input Card ---
     QWidget *m_inputCard{nullptr};

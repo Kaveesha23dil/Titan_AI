@@ -18,6 +18,7 @@
 #include "learning/activity_analyzer.hpp"
 #include "learning/suggestion_engine.hpp"
 #include "power/power_manager.hpp"
+#include "meeting/meeting_recorder.hpp"
 
 class TitanAiTestSuite : public QObject {
     Q_OBJECT
@@ -607,6 +608,119 @@ private slots:
         }
 
         std::cout << "[PASS] TranslationAssistant query detection & NL parsing" << std::endl;
+    }
+
+    void testMeetingRecorderPrompt() {
+        const QString prompt = MeetingRecorder::buildSummaryPrompt(
+            QStringLiteral("Alice reported the API outage.\nBob fixed it."));
+        QVERIFY(prompt.contains(QStringLiteral("## Key Points")));
+        QVERIFY(prompt.contains(QStringLiteral("## Decisions")));
+        QVERIFY(prompt.contains(QStringLiteral("## Action Items")));
+        QVERIFY(prompt.contains(QStringLiteral("## Open Questions")));
+        QVERIFY(prompt.contains(QStringLiteral("Alice reported the API outage.")));
+
+        std::cout << "[PASS] MeetingRecorder summary prompt builder" << std::endl;
+    }
+
+    void testMeetingRecorderNotesAndMarkdown() {
+        MeetingRecorder recorder;
+
+        // Typed notes work without any audio capture / recognizer.
+        recorder.addNote(QStringLiteral("Budget review"));
+        recorder.addNote(QStringLiteral(""));
+        recorder.addNote(QStringLiteral("  "));
+        recorder.addNote(QStringLiteral("Deadline is Friday"));
+        QCOMPARE(recorder.entries().size(), 2);
+
+        const QString transcript = recorder.transcriptText();
+        QVERIFY(transcript.contains(QStringLiteral("Budget review")));
+        QVERIFY(transcript.contains(QStringLiteral("Deadline is Friday")));
+
+        const QString md = recorder.transcriptMarkdown();
+        QVERIFY(md.contains(QStringLiteral("note")));
+
+        const QDateTime started = QDateTime::currentDateTime();
+        const QString doc = MeetingRecorder::formatNotesMarkdown(
+            QStringLiteral("Weekly Sync"),
+            started,
+            QDateTime::currentDateTime().addSecs(125),
+            recorder.entries(),
+            QStringLiteral("## Key Points\n- Ship v2 by Friday"));
+        QVERIFY(doc.contains(QStringLiteral("# Weekly Sync")));
+        QVERIFY(doc.contains(QStringLiteral("## Summary")));
+        QVERIFY(doc.contains(QStringLiteral("Ship v2 by Friday")));
+        QVERIFY(doc.contains(QStringLiteral("Duration: 2m 5s")));
+        QVERIFY(doc.contains(QStringLiteral("Budget review")));
+
+        recorder.clear();
+        QVERIFY(recorder.entries().isEmpty());
+
+        std::cout << "[PASS] MeetingRecorder notes, transcript & markdown formatting" << std::endl;
+    }
+
+    void testMeetingRecorderHtmlFormatting() {
+        QList<MeetingEntry> entries;
+        MeetingEntry speech;
+        speech.time   = QDateTime::currentDateTime();
+        speech.text   = QStringLiteral("We should move to weekly releases.");
+        speech.manual = false;
+        MeetingEntry note;
+        note.time   = QDateTime::currentDateTime();
+        note.text   = QStringLiteral("<Action> draft the migration doc");
+        note.manual = true;
+        entries << speech << note;
+
+        const QString html = MeetingRecorder::formatNotesHtml(
+            QStringLiteral("Weekly Sync"),
+            QDateTime::currentDateTime(),
+            QDateTime::currentDateTime().addSecs(60),
+            entries,
+            QStringLiteral("## Key Points\n- **Ship v2** by Friday"));
+        QVERIFY(html.contains(QStringLiteral("<h1>Weekly Sync</h1>")));
+        QVERIFY(html.contains(QStringLiteral("msg-speech")));
+        QVERIFY(html.contains(QStringLiteral("msg-note")));
+        // User text is HTML-escaped
+        QVERIFY(html.contains(QStringLiteral("&lt;Action&gt;")));
+        QVERIFY(!html.contains(QStringLiteral("<Action>")));
+        // Summary bold markers rendered as markup
+        QVERIFY(html.contains(QStringLiteral("<b>Ship v2</b>")));
+
+        std::cout << "[PASS] MeetingRecorder HTML notes formatting" << std::endl;
+    }
+
+    void testMeetingRecorderEmptyLifecycle() {
+        MeetingRecorder recorder;
+        // No entries -> nothing to summarize, error is reported not produced.
+        QVERIFY(!recorder.isRecording());
+        QCOMPARE(recorder.entries().size(), 0);
+
+        const QString doc = MeetingRecorder::formatNotesMarkdown(
+            QStringLiteral(""),
+            QDateTime(),
+            QDateTime(),
+            recorder.entries(),
+            QString());
+        QVERIFY(doc.contains(QStringLiteral("# Meeting Notes")));
+        QVERIFY(doc.contains(QStringLiteral("_No summary generated yet._")));
+        QVERIFY(doc.contains(QStringLiteral("_No entries recorded._")));
+
+        std::cout << "[PASS] MeetingRecorder empty lifecycle (offline-safe)" << std::endl;
+    }
+
+    void testMeetingRecorderSttAvailability() {
+        // Must not crash when the platform lacks Vosk; either outcome is fine,
+        // but the recorder must construct and destruct cleanly.
+        MeetingRecorder recorder;
+        const bool available = MeetingRecorder::sttAvailable();
+
+        const QString doc = MeetingRecorder::formatNotesMarkdown(
+            QStringLiteral("x"), QDateTime::currentDateTime(), QDateTime(),
+            recorder.entries(), QString());
+        QVERIFY(!doc.isEmpty());
+
+        std::cout << "[PASS] MeetingRecorder STT availability probe (" 
+                  << (available ? "Vosk present" : "Vosk absent, graceful fallback")
+                  << ")" << std::endl;
     }
 };
 
