@@ -53,6 +53,7 @@ add_executable(TitanAI
     src/agent/chat_history_manager.cpp
     src/gui/chat_history_dialog.cpp
     src/tools/translation_assistant.cpp
+    src/tools/web_search.cpp
     src/gui/translation_dialog.cpp
     src/meeting/meeting_recorder.cpp
     src/gui/meeting_notes_dialog.cpp
@@ -115,6 +116,7 @@ add_executable(titanai_tests
     src/power/power_manager.cpp
     src/agent/chat_history_manager.cpp
     src/tools/translation_assistant.cpp
+    src/tools/web_search.cpp
     src/voice/audio_capture.cpp
     src/voice/speech_recognizer.cpp
     src/meeting/meeting_recorder.cpp

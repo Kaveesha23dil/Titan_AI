@@ -15,6 +15,7 @@
 #include "tools/ui_developer.hpp"
 #include "tools/update_checker.hpp"
 #include "tools/translation_assistant.hpp"
+#include "tools/web_search.hpp"
 #include "learning/task_tracker.hpp"
 #include "learning/activity_analyzer.hpp"
 #include "learning/suggestion_engine.hpp"
@@ -64,6 +65,9 @@ public:
 
     // Translation Assistant
     [[nodiscard]] TranslationAssistant &translationAssistant();
+
+    // Web Search
+    [[nodiscard]] WebSearch &webSearch();
 
     // Chat History
     [[nodiscard]] ChatHistoryManager &chatHistoryManager();
@@ -116,14 +120,22 @@ signals:
     // Translation signals
     void translationResultReady(const QString &markdownResult);
 
+    // Web Search signals
+    void webSearchStarted();
+    void webSearchFinished(const QString &groundedAnswer);
+    void webSearchError(const QString &error);
+
 private slots:
     void onModelReady(const QString &model);
     void onPackageManagerFinished(bool success, const QString &summary);
     void onCodeFixBuildFinished(bool success, const QString &output);
     void onCompletionReceived(const QString &response);
     void onCompletionError(const QString &error);
+    void onWebSearchFinished(const QList<WebSearchResult> &results);
+    void onWebSearchError(const QString &error);
 
 private:
+    bool handleWebSearchQuery(const QString &message);
     bool handleSystemInfoQuery(const QString &message);
     bool handleCameraQuery(const QString &message);
     bool handleCalendarQuery(const QString &message);
@@ -165,9 +177,11 @@ private:
     PowerManager m_powerManager;
     ChatHistoryManager m_chatHistoryManager;
     TranslationAssistant m_translationAssistant;
+    WebSearch m_webSearch;
     bool m_codeDevelopmentEnabled{false};
     bool m_autoFixEnabled{false};
     bool m_codeFixInProgress{false};
+    QString m_webSearchQuery;
     QString m_projectDirectory;
     QString m_buildCommand;
 };

@@ -14,6 +14,7 @@
 #include "tools/ui_developer.hpp"
 #include "tools/update_checker.hpp"
 #include "tools/translation_assistant.hpp"
+#include "tools/web_search.hpp"
 #include "learning/task_tracker.hpp"
 #include "learning/activity_analyzer.hpp"
 #include "learning/suggestion_engine.hpp"
@@ -705,6 +706,20 @@ private slots:
         QVERIFY(doc.contains(QStringLiteral("_No entries recorded._")));
 
         std::cout << "[PASS] MeetingRecorder empty lifecycle (offline-safe)" << std::endl;
+    }
+
+    void testWebSearchEmptyState() {
+        // Offline-safe: constructing the tool and formatting an empty result set
+        // must not crash and must produce a sensible prompt fragment.
+        WebSearch search;
+        QVERIFY(!search.isSearching());
+        QVERIFY(search.results().isEmpty());
+
+        const QString out = search.formatResultsForPrompt();
+        QVERIFY(out.contains(QStringLiteral("No web search results available")));
+        QVERIFY(!out.trimmed().isEmpty());
+
+        std::cout << "[PASS] WebSearch empty lifecycle (offline-safe)" << std::endl;
     }
 
     void testMeetingRecorderSttAvailability() {
