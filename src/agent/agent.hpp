@@ -14,6 +14,7 @@
 #include "tools/system_info.hpp"
 #include "tools/ui_developer.hpp"
 #include "tools/update_checker.hpp"
+#include "tools/translation_assistant.hpp"
 #include "learning/task_tracker.hpp"
 #include "learning/activity_analyzer.hpp"
 #include "learning/suggestion_engine.hpp"
@@ -60,6 +61,9 @@ public:
     [[nodiscard]] FileOrganizer &fileOrganizer();
     [[nodiscard]] DiskCleanup &diskCleanup();
     [[nodiscard]] UpdateChecker &updateChecker();
+
+    // Translation Assistant
+    [[nodiscard]] TranslationAssistant &translationAssistant();
 
     // Chat History
     [[nodiscard]] ChatHistoryManager &chatHistoryManager();
@@ -109,6 +113,9 @@ signals:
     void chatHistorySearchResult(const QString &formattedResult);
     void newConversationStarted(const QString &sessionId);
 
+    // Translation signals
+    void translationResultReady(const QString &markdownResult);
+
 private slots:
     void onModelReady(const QString &model);
     void onPackageManagerFinished(bool success, const QString &summary);
@@ -129,6 +136,7 @@ private:
     bool handleUiDevelopmentQuery(const QString &message, const QImage &image = QImage());
     bool handlePowerQuery(const QString &message);
     bool handleChatHistoryQuery(const QString &message);
+    bool handleTranslationQuery(const QString &message);
     void startPasteFix(const QString &message);
     void startBuildFix();
     void requestFix(const QList<CodeFixer::BuildError> &errors);
@@ -156,6 +164,7 @@ private:
     UiDeveloper m_uiDeveloper;
     PowerManager m_powerManager;
     ChatHistoryManager m_chatHistoryManager;
+    TranslationAssistant m_translationAssistant;
     bool m_codeDevelopmentEnabled{false};
     bool m_autoFixEnabled{false};
     bool m_codeFixInProgress{false};
