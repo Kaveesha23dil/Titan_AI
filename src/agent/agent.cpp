@@ -48,6 +48,11 @@ Agent::Agent(QObject *parent)
     connect(this, &Agent::responseReceived, this, [this](const QString &response) {
         m_chatHistoryManager.appendMessage(QStringLiteral("assistant"), response);
     });
+
+    // Web Search
+    connect(&m_webSearch, &WebSearch::searchStarted, this, &Agent::webSearchStarted);
+    connect(&m_webSearch, &WebSearch::searchFinished, this, &Agent::onWebSearchFinished);
+    connect(&m_webSearch, &WebSearch::searchError, this, &Agent::onWebSearchError);
 }
 
 void Agent::initializeModel(const QString &model)
@@ -116,6 +121,10 @@ void Agent::sendMessage(const QString &message)
     }
 
     if (handleTranslationQuery(message)) {
+        return;
+    }
+
+    if (handleWebSearchQuery(message)) {
         return;
     }
 
@@ -1012,6 +1021,11 @@ TranslationAssistant &Agent::translationAssistant()
     return m_translationAssistant;
 }
 
+WebSearch &Agent::webSearch()
+{
+    return m_webSearch;
+}
+
 void Agent::startNewConversation()
 {
     const QString sessionId = m_chatHistoryManager.createSession(QStringLiteral("New Conversation"));
@@ -1832,4 +1846,126 @@ bool Agent::handleTranslationQuery(const QString &message)
 
     m_translationAssistant.translate(req);
     return true;
+}
+
+bool Agent::handleWebSearchQuery(const QString &message)
+{
+    const QString lower = message.toLower().simplified();
+
+    static const QStringList triggers = {
+        QStringLiteral("search the web for"),
+        QStringLiteral("search the web about"),
+        QStringLiteral("search the web:"),
+        QStringLiteral("search online for"),
+        QStringLiteral("search online about"),
+        QStringLiteral("search for"),
+        QStringLiteral("look up"),
+        QStringLiteral("google"),
+        QStringLiteral("web search"),
+        QStringLiteral("search the internet"),
+        QStringLiteral("latest news about"),
+    };
+
+    // A search request needs an explicit trigger so we don't hijack normal chat.
+    bool triggered = false;
+    for (const QString &trigger : triggers) {
+        if (lower.contains(trigger)) {
+            triggered = true;
+            break;
+        }
+    }
+    if (!triggered) {
+        return false;
+    }
+
+    // Extract the actual query after the trigger phrase.
+    QString query;
+    static const QStringList explicitTriggers = {
+        QStringLiteral("search the web for"),
+        QStringLiteral("search the web about"),
+        QStringLiteral("search the web:"),
+        QStringLiteral("search online for"),
+        QStringLiteral("search online about"),
+        QStringLiteral("web search for"),
+        QStringLiteral("search the internet for"),
+        QStringLiteral("look up"),
+        QStringLiteral("google"),
+        QStringLiteral("latest news about"),
+    };
+    for (const QString &trigger : explicitTriggers) {
+        const int pos = lower.indexOf(trigger);
+        if (pos >= 0) {
+            query = message.mid(pos + trigger.length()).trimmed();
+            break;
+        }
+    }
+    query.remove(QRegularExpression(QStringLiteral("[\"“”']+")));
+    query = query.trimmed();
+
+    if (query.isEmpty()) {
+        emit responseReceived(
+            QStringLiteral("🔍 What would you like me to search the web for? "
+                           "Try: *\"search the web for latest Arch Linux news\"*"));
+        return true;
+    }
+
+    if (m_webSearch.isSearching()) {
+        emit responseReceived(QStringLiteral("🔍 A web search is already running. Please wait."));
+        return true;
+    }
+
+    m_webSearchQuery = query;
+    emit responseChunkReceived(QStringLiteral("🔍 Searching the web for **\"%1\"**…\n").arg(query));
+    m_webSearch.search(query);
+    return true;
+}
+
+void Agent::onWebSearchFinished(const QList<WebSearchResult> &results)
+{
+    Q_UNUSED(results);
+
+    const QString context = m_webSearch.formatResultsForPrompt();
+    if (context.isEmpty()) {
+        emit webSearchError(QStringLiteral("No usable web results were returned."));
+        return;
+    }
+
+    // Feed the search results to the LLM so it can produce a grounded answer.
+    const QString prompt = QStringLiteral(
+        "The user asked: \"%1\"\n\n"
+        "%2\n\n"
+        "Please answer the user's question using only the web search results above as "
+        "grounding. Cite the relevant sources inline when useful, be accurate and honest, "
+        "and keep the answer clear and concise.")
+        .arg(m_webSearchQuery, context);
+
+    emit webSearchFinished(context);
+
+    // requestCompletion emits completionReceived (not responseReceived), so wire
+    // one-shot forwarders that surface the grounded answer as a normal chat reply.
+    // The agent's responseReceived connection already logs it to chat history.
+    auto connPtr = std::make_shared<QMetaObject::Connection>();
+    *connPtr = connect(&m_ollamaClient, &OllamaClient::completionReceived, this,
+        [this, connPtr](const QString &response) {
+            disconnect(*connPtr);
+            emit responseReceived(response);
+        });
+    auto errConnPtr = std::make_shared<QMetaObject::Connection>();
+    *errConnPtr = connect(&m_ollamaClient, &OllamaClient::completionError, this,
+        [this, errConnPtr](const QString &error) {
+            disconnect(*errConnPtr);
+            const QString msg = QStringLiteral("❌ **Web Search Error:** %1").arg(error);
+            emit responseReceived(msg);
+        });
+
+    m_ollamaClient.requestCompletion(prompt);
+}
+
+void Agent::onWebSearchError(const QString &error)
+{
+    emit webSearchError(error);
+    const QString msg = QStringLiteral("❌ **Web Search Error:** %1\n\n"
+                                       "Check your internet connection and try again.")
+                            .arg(error);
+    emit responseReceived(msg);
 }
