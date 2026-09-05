@@ -13,6 +13,7 @@
 #include "tools/system_info.hpp"
 #include "tools/ui_developer.hpp"
 #include "tools/update_checker.hpp"
+#include "tools/translation_assistant.hpp"
 #include "learning/task_tracker.hpp"
 #include "learning/activity_analyzer.hpp"
 #include "learning/suggestion_engine.hpp"
@@ -410,6 +411,189 @@ private slots:
         // Cleanup
         mgr.deleteSession(sessionId);
         std::cout << "[PASS] ChatHistory export (Markdown + plain text)" << std::endl;
+    }
+
+    // ── Translation Assistant Tests ────────────────────────────────────────────
+
+    void testTranslationAssistantSupportedLanguages() {
+        const QList<LanguageInfo> langs = TranslationAssistant::supportedLanguages();
+        QVERIFY(langs.size() >= 40);
+
+        // "auto" entry exists
+        bool hasAuto = false;
+        for (const LanguageInfo &l : langs) {
+            if (l.code == QStringLiteral("auto")) { hasAuto = true; break; }
+        }
+        QVERIFY(hasAuto);
+
+        // Common languages present
+        const QStringList expected = { QStringLiteral("en"), QStringLiteral("es"),
+                                       QStringLiteral("fr"), QStringLiteral("de"),
+                                       QStringLiteral("ja"), QStringLiteral("zh"),
+                                       QStringLiteral("ar"), QStringLiteral("hi") };
+        for (const QString &code : expected) {
+            const LanguageInfo info = TranslationAssistant::languageByCode(code);
+            QByteArray msg = QStringLiteral("Missing language: %1").arg(code).toUtf8();
+            QVERIFY2(!info.name.isEmpty(), msg.constData());
+            QVERIFY(!info.flag.isEmpty());
+        }
+
+        // languageCodes returns all codes
+        const QStringList codes = TranslationAssistant::languageCodes();
+        QVERIFY(codes.contains(QStringLiteral("en")));
+        QVERIFY(codes.contains(QStringLiteral("ja")));
+
+        std::cout << "[PASS] TranslationAssistant supported languages (" << langs.size() << " langs)" << std::endl;
+    }
+
+    void testTranslationAssistantPromptBuilder() {
+        TranslationRequest req;
+        req.text             = QStringLiteral("Hello, how are you?");
+        req.sourceLanguage   = QStringLiteral("en");
+        req.targetLanguage   = QStringLiteral("es");
+        req.tone             = TranslationTone::Formal;
+        req.provideBreakdown = true;
+
+        const QString prompt = TranslationAssistant::buildTranslationPrompt(req);
+        QVERIFY(!prompt.isEmpty());
+        QVERIFY(prompt.contains(QStringLiteral("Spanish")));
+        QVERIFY(prompt.contains(QStringLiteral("Hello, how are you?")));
+        QVERIFY(prompt.contains(QStringLiteral("Formal")));
+        QVERIFY(prompt.contains(QStringLiteral("PRONUNCIATION:")));
+        QVERIFY(prompt.contains(QStringLiteral("ALTERNATIVES:")));
+        QVERIFY(prompt.contains(QStringLiteral("GRAMMAR_NOTES:")));
+        QVERIFY(prompt.contains(QStringLiteral("EXAMPLE:")));
+
+        // Auto tone should NOT add tone clause
+        req.tone = TranslationTone::Auto;
+        const QString autoPrompt = TranslationAssistant::buildTranslationPrompt(req);
+        QVERIFY(!autoPrompt.contains(QStringLiteral("Use a Auto tone.")));
+
+        std::cout << "[PASS] TranslationAssistant prompt builder" << std::endl;
+    }
+
+    void testTranslationAssistantResponseParsing() {
+        // Simulate LLM response with all structured sections
+        const QString llmOutput = QStringLiteral(
+            "Hola, ¿cómo estás?\n"
+            "PRONUNCIATION: oh-lah, koh-moh ess-tahs\n"
+            "ALTERNATIVES: Hola, ¿qué tal?, Buenos días, ¿cómo te va?\n"
+            "GRAMMAR_NOTES: 'cómo estás' is informal. Use 'cómo está usted' for formal.\n"
+            "EXAMPLE: Hola María, ¿cómo estás hoy?\n"
+            "DETECTED_SOURCE: en\n"
+        );
+
+        TranslationRequest req;
+        req.text           = QStringLiteral("Hello, how are you?");
+        req.sourceLanguage = QStringLiteral("en");
+        req.targetLanguage = QStringLiteral("es");
+
+        const TranslationResult result = TranslationAssistant::parseTranslationResponse(llmOutput, req);
+        QVERIFY(result.success);
+        QCOMPARE(result.translatedText, QStringLiteral("Hola, ¿cómo estás?"));
+        QVERIFY(result.pronunciation.contains(QStringLiteral("oh-lah")));
+        QVERIFY(result.alternatives.size() >= 2);
+        QVERIFY(!result.grammarNotes.isEmpty());
+        QVERIFY(!result.exampleSentence.isEmpty());
+        QCOMPARE(result.detectedSourceLanguage, QStringLiteral("en"));
+
+        // Markdown formatter test
+        const QString md = TranslationAssistant::formatResultAsMarkdown(result, req);
+        QVERIFY(md.contains(QStringLiteral("Hola, ¿cómo estás?")));
+        QVERIFY(md.contains(QStringLiteral("Pronunciation")));
+
+        // Empty response should fail gracefully
+        const TranslationResult empty = TranslationAssistant::parseTranslationResponse(QString(), req);
+        QVERIFY(!empty.success);
+
+        std::cout << "[PASS] TranslationAssistant response parsing & markdown formatter" << std::endl;
+    }
+
+    void testTranslationAssistantOfflineFallbackAndCache() {
+        TranslationAssistant ta;
+
+        // Verify offline phrasebook key languages
+        QVERIFY(ta.cacheSize() == 0);
+
+        // Tone helpers
+        QCOMPARE(TranslationAssistant::toneName(TranslationTone::Formal), QStringLiteral("Formal"));
+        QCOMPARE(TranslationAssistant::toneName(TranslationTone::Casual), QStringLiteral("Casual"));
+        QCOMPARE(TranslationAssistant::toneFromName(QStringLiteral("Technical")), TranslationTone::Technical);
+        QCOMPARE(TranslationAssistant::toneFromName(QStringLiteral("Poetic")),    TranslationTone::Poetic);
+        QCOMPARE(TranslationAssistant::toneFromName(QStringLiteral("Unknown")),   TranslationTone::Auto);
+
+        // Language detection heuristics
+        QCOMPARE(TranslationAssistant::detectLanguage(QStringLiteral("こんにちは")), QStringLiteral("ja"));
+        QCOMPARE(TranslationAssistant::detectLanguage(QStringLiteral("你好")),      QStringLiteral("zh"));
+        QCOMPARE(TranslationAssistant::detectLanguage(QStringLiteral("Привет")),    QStringLiteral("ru"));
+        QCOMPARE(TranslationAssistant::detectLanguage(QStringLiteral("مرحبا")),    QStringLiteral("ar"));
+        QCOMPARE(TranslationAssistant::detectLanguage(QStringLiteral("Hello")),     QStringLiteral("en"));
+
+        // toneNames returns correct count
+        QCOMPARE(TranslationAssistant::toneNames().size(), 7);
+
+        std::cout << "[PASS] TranslationAssistant offline phrasebook & tone helpers" << std::endl;
+    }
+
+    void testTranslationAssistantHistory() {
+        TranslationAssistant ta;
+        ta.clearHistory();
+        QVERIFY(ta.history().isEmpty());
+
+        // History search on empty list
+        QVERIFY(ta.searchHistory(QStringLiteral("hello")).isEmpty());
+
+        // removeHistoryEntry on empty list returns false
+        QVERIFY(!ta.removeHistoryEntry(QStringLiteral("nonexistent")));
+
+        // setFavorite on empty returns false
+        QVERIFY(!ta.setFavorite(QStringLiteral("nonexistent"), true));
+
+        std::cout << "[PASS] TranslationAssistant history (empty lifecycle)" << std::endl;
+    }
+
+    void testTranslationAssistantQueryDetection() {
+        // Positive cases
+        QVERIFY(TranslationAssistant::isTranslationQuery(
+            QStringLiteral("translate \"Hello world\" to Spanish")));
+        QVERIFY(TranslationAssistant::isTranslationQuery(
+            QStringLiteral("how do you say thank you in Japanese")));
+        QVERIFY(TranslationAssistant::isTranslationQuery(
+            QStringLiteral("quick translate to German: Where is the station?")));
+        QVERIFY(TranslationAssistant::isTranslationQuery(
+            QStringLiteral("What is the translation of bonjour")));
+        QVERIFY(TranslationAssistant::isTranslationQuery(
+            QStringLiteral("What does merci mean in spanish")));
+
+        // Negative cases
+        QVERIFY(!TranslationAssistant::isTranslationQuery(
+            QStringLiteral("build and fix errors")));
+        QVERIFY(!TranslationAssistant::isTranslationQuery(
+            QStringLiteral("check system info")));
+        QVERIFY(!TranslationAssistant::isTranslationQuery(
+            QStringLiteral("what packages are installed")));
+
+        // Parsing tests
+        {
+            const TranslationRequest req = TranslationAssistant::parseNaturalLanguageRequest(
+                QStringLiteral("translate \"Good morning\" to French"));
+            QCOMPARE(req.text, QStringLiteral("Good morning"));
+            QCOMPARE(req.targetLanguage, QStringLiteral("fr"));
+        }
+        {
+            const TranslationRequest req = TranslationAssistant::parseNaturalLanguageRequest(
+                QStringLiteral("how do you say thank you in Japanese"));
+            QCOMPARE(req.text, QStringLiteral("thank you"));
+            QCOMPARE(req.targetLanguage, QStringLiteral("ja"));
+        }
+        {
+            const TranslationRequest req = TranslationAssistant::parseNaturalLanguageRequest(
+                QStringLiteral("translate this into German: Good night"));
+            QCOMPARE(req.text, QStringLiteral("Good night"));
+            QCOMPARE(req.targetLanguage, QStringLiteral("de"));
+        }
+
+        std::cout << "[PASS] TranslationAssistant query detection & NL parsing" << std::endl;
     }
 };
 

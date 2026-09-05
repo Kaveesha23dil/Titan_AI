@@ -9,6 +9,7 @@
 #include "agent/agent.hpp"
 #include "voice/voice_engine.hpp"
 #include "gui/chat_history_dialog.hpp"
+#include "gui/translation_dialog.hpp"
 
 class QCheckBox;
  class QComboBox;
@@ -72,6 +73,9 @@ private slots:
     void onModelsChanged(const QStringList &models);
     void onSaveSettings();
     void onSettingsBrowseProject();
+    void onOpenTranslationAssistant();
+    void onTranslateSelectedText();
+    void onTranslationSendToChat(const QString &text);
 
     // Power Management slots
     void onPowerProfileChanged(int index);
@@ -159,6 +163,8 @@ private:
 
     // --- Chat History ---
     QPushButton   *m_navHistory{nullptr};  ///< Sidebar history button (🕐)
+    // --- Translation ---
+    QPushButton   *m_navTranslate{nullptr}; ///< Sidebar translation button (🌐)
 
     // --- Shared Input Card ---
     QWidget *m_inputCard{nullptr};

@@ -37,6 +37,8 @@
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QShortcut>
+#include <QMenu>
+#include <QAction>
 
 // ─────────────────────────────────────────────────────────────
 //  Colour tokens  (dark theme)
@@ -221,6 +223,21 @@ QIcon MainWindow::createVectorIcon(const QString &name, int size)
             p.drawEllipse(QPointF(kx, y), 2.5, 2.5);
             p.setBrush(Qt::NoBrush);
         }
+    } else if (name == QLatin1String("translate")) {
+        // Globe outline with a horizontal line across the middle
+        const qreal cx = s / 2, cy = s / 2, r = (s - 2 * m) / 2;
+        p.drawEllipse(QPointF(cx, cy), r, r);
+        // Horizontal equator line
+        p.drawLine(QPointF(m, cy), QPointF(s - m, cy));
+        // Vertical meridian arc (simplified as a vertical ellipse)
+        QPainterPath meridian;
+        meridian.moveTo(cx, m);
+        meridian.cubicTo(cx + r * 0.55, m + r * 0.4, cx + r * 0.55, cy + r * 0.4, cx, s - m);
+        p.drawPath(meridian);
+        QPainterPath meridian2;
+        meridian2.moveTo(cx, m);
+        meridian2.cubicTo(cx - r * 0.55, m + r * 0.4, cx - r * 0.55, cy + r * 0.4, cx, s - m);
+        p.drawPath(meridian2);
     }
 
     p.end();
@@ -359,7 +376,8 @@ QWidget *MainWindow::createSidebar()
     m_navChat    = makeNavBtn(QStringLiteral("chat"),    QStringLiteral("Chat"));
     m_navDev     = makeNavBtn(QStringLiteral("dev"),     QStringLiteral("Developer Hub"));
     m_navCalendar = makeNavBtn(QStringLiteral("calendar"), QStringLiteral("Calendar Settings"));
-    m_navHistory = makeNavBtn(QStringLiteral("history"),  QStringLiteral("Chat History & Search (Ctrl+H)"));
+    m_navHistory = makeNavBtn(QStringLiteral("history"),   QStringLiteral("Chat History & Search (Ctrl+H)"));
+    m_navTranslate = makeNavBtn(QStringLiteral("translate"), QStringLiteral("Translation Assistant (Ctrl+Alt+T)"));
 
     m_navHome->setChecked(true);
 
@@ -378,6 +396,7 @@ QWidget *MainWindow::createSidebar()
     connect(m_navCalendar,    &QPushButton::clicked, this, &MainWindow::onOpenCalendarSettings);
     connect(m_navVoiceSettings, &QPushButton::clicked, this, &MainWindow::onVoiceSettings);
     connect(m_navHistory, &QPushButton::clicked, this, &MainWindow::onOpenChatHistory);
+    connect(m_navTranslate, &QPushButton::clicked, this, &MainWindow::onOpenTranslationAssistant);
     connect(m_navSettings, &QPushButton::clicked, this, [this]() { navigateTo(3); });
 
     return sidebar;
@@ -1895,6 +1914,38 @@ MainWindow::MainWindow(QWidget *parent)
     auto *shortcutF = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_F), this);
     connect(shortcutF, &QShortcut::activated, this, &MainWindow::onOpenChatHistory);
 
+    // ── Keyboard shortcuts for Translation Assistant ──────────────────────────
+    auto *shortcutTranslate = new QShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_T), this);
+    connect(shortcutTranslate, &QShortcut::activated, this, &MainWindow::onTranslateSelectedText);
+
+    auto *shortcutTranslate2 = new QShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_T), this);
+    connect(shortcutTranslate2, &QShortcut::activated, this, &MainWindow::onOpenTranslationAssistant);
+
+    // Context menu on chat display for "Translate Selected Text"
+    if (m_chatDisplay) {
+        m_chatDisplay->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(m_chatDisplay, &QTextBrowser::customContextMenuRequested,
+                this, [this](const QPoint &pos) {
+            QMenu *menu = m_chatDisplay->createStandardContextMenu();
+            const QString sel = m_chatDisplay->textCursor().selectedText().trimmed();
+            if (!sel.isEmpty()) {
+                menu->addSeparator();
+                QAction *translateAct = menu->addAction(
+                    QStringLiteral("🌐 Translate Selected Text (Ctrl+Alt+T)"));
+                connect(translateAct, &QAction::triggered, this, [this, sel]() {
+                    auto *dlg = new TranslationDialog(&m_agent.translationAssistant(), this);
+                    connect(dlg, &TranslationDialog::sendToChatRequested,
+                            this, &MainWindow::onTranslationSendToChat);
+                    dlg->setAttribute(Qt::WA_DeleteOnClose);
+                    dlg->setSourceText(sel);
+                    dlg->show();
+                });
+            }
+            menu->exec(m_chatDisplay->viewport()->mapToGlobal(pos));
+            delete menu;
+        });
+    }
+
     // When a new conversation is started from the agent (natural language or dialog),
     // clear the visible chat display so the UI reflects the fresh session.
     connect(&m_agent, &Agent::newConversationStarted, this, [this](const QString &) {
@@ -2527,6 +2578,57 @@ void MainWindow::onOpenChatHistory()
             });
 
     dialog.exec();
+}
+
+// ─────────────────────────────────────────────────────────────
+//  Translation Assistant Slots
+// ─────────────────────────────────────────────────────────────
+
+void MainWindow::onOpenTranslationAssistant()
+{
+    auto *dlg = new TranslationDialog(&m_agent.translationAssistant(), this);
+    connect(dlg, &TranslationDialog::sendToChatRequested,
+            this, &MainWindow::onTranslationSendToChat);
+    connect(dlg, &TranslationDialog::speakRequested,
+            this, [this](const QString &text, const QString &) {
+                // Route TTS through the agent's voice engine
+                m_voiceEngine.speak(text);
+            });
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    dlg->show();
+    dlg->raise();
+    dlg->activateWindow();
+}
+
+void MainWindow::onTranslateSelectedText()
+{
+    // Grab primary selection first (Linux X11), then clipboard
+    QClipboard *cb = QApplication::clipboard();
+    QString sel = cb->text(QClipboard::Selection).trimmed();
+    if (sel.isEmpty())
+        sel = cb->text(QClipboard::Clipboard).trimmed();
+
+    auto *dlg = new TranslationDialog(&m_agent.translationAssistant(), this);
+    connect(dlg, &TranslationDialog::sendToChatRequested,
+            this, &MainWindow::onTranslationSendToChat);
+    connect(dlg, &TranslationDialog::speakRequested,
+            this, [this](const QString &text, const QString &) {
+                m_voiceEngine.speak(text);
+            });
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    dlg->show();
+    dlg->raise();
+    dlg->activateWindow();
+    if (!sel.isEmpty())
+        dlg->setSourceText(sel);
+}
+
+void MainWindow::onTranslationSendToChat(const QString &text)
+{
+    if (text.trimmed().isEmpty()) return;
+    navigateTo(1);
+    appendMessage(QStringLiteral("You"), text, Col::AccentGlow);
+    m_agent.sendMessage(text);
 }
 
 void MainWindow::onLoadHistorySession(const QString &sessionId)

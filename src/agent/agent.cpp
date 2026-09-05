@@ -115,6 +115,10 @@ void Agent::sendMessage(const QString &message)
         return;
     }
 
+    if (handleTranslationQuery(message)) {
+        return;
+    }
+
     m_ollamaClient.sendPrompt(message);
 }
 
@@ -1003,6 +1007,11 @@ ChatHistoryManager &Agent::chatHistoryManager()
     return m_chatHistoryManager;
 }
 
+TranslationAssistant &Agent::translationAssistant()
+{
+    return m_translationAssistant;
+}
+
 void Agent::startNewConversation()
 {
     const QString sessionId = m_chatHistoryManager.createSession(QStringLiteral("New Conversation"));
@@ -1740,4 +1749,87 @@ bool Agent::handlePowerQuery(const QString &message)
     }
 
     return false;
+}
+
+// ─────────────────────────────────────────────────────────────
+//  Translation Query Handler
+// ─────────────────────────────────────────────────────────────
+bool Agent::handleTranslationQuery(const QString &message)
+{
+    if (!TranslationAssistant::isTranslationQuery(message))
+        return false;
+
+    const QString lower = message.toLower().trimmed();
+
+    // Handle "translation history" / "translation languages" meta-queries
+    if (lower == QLatin1String("translation history") ||
+        lower == QLatin1String("translate history")) {
+        const QList<TranslationHistoryEntry> hist = m_translationAssistant.history();
+        if (hist.isEmpty()) {
+            emit responseReceived(QStringLiteral("📖 No translation history yet. Try asking me to translate something!"));
+        } else {
+            QString summary = QStringLiteral("## 🕐 Recent Translations\n\n");
+            const int count = qMin(10, static_cast<int>(hist.size()));
+            for (int i = 0; i < count; ++i) {
+                const TranslationHistoryEntry &e = hist[i];
+                summary += QStringLiteral("- **%1** → *%2* (%3 → %4)\n")
+                    .arg(e.sourceText.left(40),
+                         e.translatedText.left(60),
+                         TranslationAssistant::languageDisplayName(e.sourceLang),
+                         TranslationAssistant::languageDisplayName(e.targetLang));
+            }
+            if (hist.size() > 10)
+                summary += QStringLiteral("\n*…and %1 more. Open the Translation Assistant for the full list.*").arg(hist.size() - 10);
+            emit responseReceived(summary);
+        }
+        return true;
+    }
+
+    if (lower == QLatin1String("translation languages") ||
+        lower == QLatin1String("translate languages") ||
+        lower == QLatin1String("what languages can you translate")) {
+        QString langList = QStringLiteral("## 🌐 Supported Translation Languages\n\n");
+        const QList<LanguageInfo> langs = TranslationAssistant::supportedLanguages();
+        for (const LanguageInfo &l : langs) {
+            if (l.code == QLatin1String("auto")) continue;
+            langList += QStringLiteral("%1 **%2** (`%3`)   ").arg(l.flag, l.name, l.code);
+        }
+        emit responseReceived(langList);
+        return true;
+    }
+
+    // Parse and execute the translation
+    const TranslationRequest req = TranslationAssistant::parseNaturalLanguageRequest(message);
+
+    if (req.text.trimmed().isEmpty()) {
+        emit responseReceived(QStringLiteral(
+            "🌐 **Translation Assistant**\n\n"
+            "Please provide the text to translate. Examples:\n"
+            "- `translate \"Hello world\" to Spanish`\n"
+            "- `how do you say thank you in Japanese`\n"
+            "- `translate this into French: Good morning!`\n"
+            "- `quick translate to German: Where is the train station?`"));
+        return true;
+    }
+
+    emit responseChunkReceived(QStringLiteral(
+        "🔄 Translating to **%1**…\n").arg(
+            TranslationAssistant::languageDisplayName(req.targetLanguage)));
+
+    // Connect single-shot to receive the result and emit it as a chat response
+    connect(&m_translationAssistant, &TranslationAssistant::translationReady,
+            this, [this](const TranslationResult &result, const TranslationRequest &req) {
+        const QString md = TranslationAssistant::formatResultAsMarkdown(result, req);
+        m_chatHistoryManager.appendMessage(QStringLiteral("assistant"), md);
+        emit responseReceived(md);
+    }, Qt::SingleShotConnection);
+
+    connect(&m_translationAssistant, &TranslationAssistant::translationError,
+            this, [this](const QString &error, const TranslationRequest &) {
+        const QString msg = QStringLiteral("❌ **Translation Error:** %1").arg(error);
+        emit responseReceived(msg);
+    }, Qt::SingleShotConnection);
+
+    m_translationAssistant.translate(req);
+    return true;
 }
