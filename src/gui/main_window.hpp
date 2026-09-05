@@ -128,6 +128,12 @@ private:
     void applyProjectDirectory(const QString &directory);
     void updateModelLabels(const QString &model);
 
+    // --- Conversation export helpers ---
+    [[nodiscard]] QString exportFileName(ChatHistoryManager &history,
+                                         const QString &extension) const;
+    void exportCurrentConversationAsMarkdown();
+    void exportCurrentConversationAsPdf();
+
     // --- Core state ---
     Agent m_agent;
     VoiceEngine m_voiceEngine;

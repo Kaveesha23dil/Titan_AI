@@ -1,5 +1,7 @@
 #include "gui/chat_history_dialog.hpp"
+#include "gui/export_utils.hpp"
 
+#include <QAction>
 #include <QComboBox>
 #include <QDateTime>
 #include <QFileDialog>
@@ -10,8 +12,10 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QListWidgetItem>
+#include <QMenu>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QShortcut>
 #include <QSplitter>
 #include <QStackedWidget>
@@ -158,16 +162,18 @@ void ChatHistoryDialog::setupUi()
     m_deleteBtn = new QPushButton(QStringLiteral("🗑 Delete"), actionBar);
     m_deleteBtn->setObjectName(QStringLiteral("deleteBtn"));
 
-    m_exportMdBtn  = new QPushButton(QStringLiteral("↓ Markdown"), actionBar);
-    m_exportMdBtn->setObjectName(QStringLiteral("exportMdBtn"));
-    m_exportTxtBtn = new QPushButton(QStringLiteral("↓ Text"), actionBar);
-    m_exportTxtBtn->setObjectName(QStringLiteral("exportTxtBtn"));
+    m_exportBtn = new QPushButton(QStringLiteral("⬇  Export"), actionBar);
+    m_exportBtn->setObjectName(QStringLiteral("exportBtn"));
+    auto *exportMenu = new QMenu(m_exportBtn);
+    QAction *mdAction  = exportMenu->addAction(QStringLiteral("Markdown (.md)"));
+    QAction *pdfAction = exportMenu->addAction(QStringLiteral("PDF (.pdf)"));
+    QAction *txtAction = exportMenu->addAction(QStringLiteral("Plain Text (.txt)"));
+    m_exportBtn->setMenu(exportMenu);
 
     actionLayout->addWidget(m_renameBtn);
     actionLayout->addWidget(m_deleteBtn);
     actionLayout->addStretch(1);
-    actionLayout->addWidget(m_exportMdBtn);
-    actionLayout->addWidget(m_exportTxtBtn);
+    actionLayout->addWidget(m_exportBtn);
     leftLayout->addWidget(actionBar);
 
     m_splitter->addWidget(leftPane);
@@ -237,8 +243,9 @@ void ChatHistoryDialog::setupUi()
     connect(m_newChatBtn,  &QPushButton::clicked,       this, &ChatHistoryDialog::onNewChat);
     connect(m_deleteBtn,   &QPushButton::clicked,       this, &ChatHistoryDialog::onDeleteSession);
     connect(m_renameBtn,   &QPushButton::clicked,       this, &ChatHistoryDialog::onRenameSession);
-    connect(m_exportMdBtn, &QPushButton::clicked,       this, &ChatHistoryDialog::onExportMarkdown);
-    connect(m_exportTxtBtn,&QPushButton::clicked,       this, &ChatHistoryDialog::onExportText);
+    connect(mdAction,  &QAction::triggered, this, &ChatHistoryDialog::onExportMarkdown);
+    connect(pdfAction, &QAction::triggered, this, &ChatHistoryDialog::onExportPdf);
+    connect(txtAction, &QAction::triggered, this, &ChatHistoryDialog::onExportText);
     connect(m_closeBtn,    &QPushButton::clicked,       this, &QDialog::reject);
 
     // Refresh list when history changes
@@ -298,7 +305,7 @@ void ChatHistoryDialog::setupStylesheet()
             background: #0a0e1a;
             border-top: 1px solid #1e293b;
         }
-        #renameBtn, #deleteBtn, #exportMdBtn, #exportTxtBtn {
+        #renameBtn, #deleteBtn, #exportBtn {
             background: #111827;
             color: #94a3b8;
             border: 1px solid #1e293b;
@@ -306,7 +313,7 @@ void ChatHistoryDialog::setupStylesheet()
             padding: 4px 10px;
             font-size: 11px;
         }
-        #renameBtn:hover, #exportMdBtn:hover, #exportTxtBtn:hover {
+        #renameBtn:hover, #exportBtn:hover {
             background: #1a2236;
             color: #f1f5f9;
             border-color: #6366f1;
@@ -710,6 +717,26 @@ void ChatHistoryDialog::onRenameSession()
     }
 }
 
+QString ChatHistoryDialog::selectedSessionTitle() const
+{
+    if (!m_history) { return {}; }
+    for (const ChatSessionSummary &s : m_history->allSessions()) {
+        if (s.id == m_selectedSessionId) {
+            return s.title;
+        }
+    }
+    return {};
+}
+
+QString safeFileName(const QString &title, const QString &extension)
+{
+    QString name = title.simplified();
+    name.replace(QRegularExpression(QStringLiteral("[^\\w\\- ]+")), QString());
+    name.replace(QLatin1Char(' '), QLatin1Char('_'));
+    return name.isEmpty() ? QStringLiteral("conversation") + extension
+                          : name + extension;
+}
+
 void ChatHistoryDialog::onExportMarkdown()
 {
     if (m_selectedSessionId.isEmpty() || !m_history) { return; }
@@ -717,17 +744,9 @@ void ChatHistoryDialog::onExportMarkdown()
     const QString md = m_history->exportToMarkdown(m_selectedSessionId);
     if (md.isEmpty()) { return; }
 
-    QString suggestedName;
-    for (const ChatSessionSummary &s : m_history->allSessions()) {
-        if (s.id == m_selectedSessionId) {
-            suggestedName = s.title.simplified().replace(QLatin1Char(' '), QLatin1Char('_')) + QStringLiteral(".md");
-            break;
-        }
-    }
-
     const QString path = QFileDialog::getSaveFileName(
         this, QStringLiteral("Export as Markdown"),
-        suggestedName,
+        safeFileName(selectedSessionTitle(), QStringLiteral(".md")),
         QStringLiteral("Markdown Files (*.md)"));
 
     if (path.isEmpty()) { return; }
@@ -739,6 +758,29 @@ void ChatHistoryDialog::onExportMarkdown()
     }
 }
 
+void ChatHistoryDialog::onExportPdf()
+{
+    if (m_selectedSessionId.isEmpty() || !m_history) { return; }
+
+    const QString html = m_history->exportToHtml(m_selectedSessionId);
+    if (html.isEmpty()) { return; }
+
+    const QString path = QFileDialog::getSaveFileName(
+        this, QStringLiteral("Export as PDF"),
+        safeFileName(selectedSessionTitle(), QStringLiteral(".pdf")),
+        QStringLiteral("PDF Files (*.pdf)"));
+
+    if (path.isEmpty()) { return; }
+
+    QString error;
+    if (!ExportUtils::writeHtmlToPdf(html, selectedSessionTitle(), path, &error)) {
+        QMessageBox::warning(
+            this,
+            QStringLiteral("Export Failed"),
+            QStringLiteral("Could not save the conversation as a PDF.\n%1").arg(error));
+    }
+}
+
 void ChatHistoryDialog::onExportText()
 {
     if (m_selectedSessionId.isEmpty() || !m_history) { return; }
@@ -746,17 +788,9 @@ void ChatHistoryDialog::onExportText()
     const QString txt = m_history->exportToPlainText(m_selectedSessionId);
     if (txt.isEmpty()) { return; }
 
-    QString suggestedName;
-    for (const ChatSessionSummary &s : m_history->allSessions()) {
-        if (s.id == m_selectedSessionId) {
-            suggestedName = s.title.simplified().replace(QLatin1Char(' '), QLatin1Char('_')) + QStringLiteral(".txt");
-            break;
-        }
-    }
-
     const QString path = QFileDialog::getSaveFileName(
         this, QStringLiteral("Export as Plain Text"),
-        suggestedName,
+        safeFileName(selectedSessionTitle(), QStringLiteral(".txt")),
         QStringLiteral("Text Files (*.txt)"));
 
     if (path.isEmpty()) { return; }

@@ -51,6 +51,7 @@ private slots:
     void onDeleteSession();
     void onRenameSession();
     void onExportMarkdown();
+    void onExportPdf();
     void onExportText();
     void onRoleFilterChanged(int index);
     void refreshSessionList();
@@ -62,6 +63,7 @@ private:
     void showSessionPreview(const QString &sessionId);
     void showSearchResults(const QList<SearchResult> &results, const QString &query);
     void clearPreview();
+    [[nodiscard]] QString selectedSessionTitle() const;
 
     ChatHistoryManager   *m_history{nullptr};
     QString               m_selectedSessionId;
@@ -75,8 +77,7 @@ private:
     QListWidget       *m_sessionList{nullptr};
     QPushButton       *m_deleteBtn{nullptr};
     QPushButton       *m_renameBtn{nullptr};
-    QPushButton       *m_exportMdBtn{nullptr};
-    QPushButton       *m_exportTxtBtn{nullptr};
+    QPushButton       *m_exportBtn{nullptr};
     QTextBrowser      *m_previewBrowser{nullptr};
     QPushButton       *m_loadBtn{nullptr};
     QLabel            *m_resultCountLabel{nullptr};
