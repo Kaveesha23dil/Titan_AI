@@ -92,6 +92,21 @@ TitanAI tracks your installed package versions and tells you what can be updated
 
 TitanAI never installs anything on its own — review the list first, then update yourself.
 
+## Export Conversations
+
+Save any chat log as **Markdown** or **PDF**:
+
+- **From the main chat window** — click the **⬇ Export** button in the chat header
+  (or press **Ctrl+H** to open the history), pick *Markdown (.md)* or *PDF (.pdf)*,
+  choose where to save, and the current conversation is exported as a styled,
+  human-readable transcript.
+- **From the history panel** — select any saved conversation and use the
+  **⬇ Export** menu (Markdown / PDF / Plain Text) in the bottom-left action bar.
+
+Exports include message timestamps, sender labels, and image-attached markers.
+MD files are plain Markdown; PDFs are paginated A4 documents with a clean
+print-oriented theme generated locally — nothing is uploaded anywhere.
+
 ## Voice Features
 
 TitanAI includes a fully local voice assistant built on top of the chat GUI:

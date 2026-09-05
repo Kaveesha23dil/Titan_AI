@@ -4,9 +4,12 @@
 #include "gui/voice_settings_dialog.hpp"
 #include "gui/calendar_settings_dialog.hpp"
 #include "gui/chat_history_dialog.hpp"
+#include "gui/export_utils.hpp"
 
+#include <QApplication>
 #include <QBuffer>
 #include <QCheckBox>
+#include <QClipboard>
 #include <QComboBox>
 #include <QDir>
 #include <QFileDialog>
@@ -25,6 +28,7 @@
 #include <QPlainTextEdit>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QSignalBlocker>
@@ -33,6 +37,7 @@
 #include <QSpinBox>
 #include <QSystemTrayIcon>
 #include <QTextBrowser>
+#include <QTextStream>
 #include <QTime>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -627,6 +632,22 @@ QWidget *MainWindow::createChatPage()
     onlineText->setStyleSheet(QStringLiteral(
         "QLabel { color: %1; font-size: 11px; border: none; background: transparent; }").arg(Col::TextMuted));
     headerLayout->addWidget(onlineText);
+
+    // Export current conversation (Markdown / PDF)
+    auto *exportBtn = new QPushButton(QStringLiteral("⬇ Export"), headerBar);
+    exportBtn->setCursor(Qt::PointingHandCursor);
+    exportBtn->setStyleSheet(QStringLiteral(
+        "QPushButton { color: %1; background: transparent; border: 1px solid %2; "
+        "border-radius: 6px; padding: 5px 12px; font-size: 11px; }"
+        "QPushButton:hover { background: %3; border-color: %4; color: %5; }")
+        .arg(Col::TextPrimary, Col::Border, Col::BgCardHover, Col::Accent, Col::TextPrimary));
+    auto *exportMenu = new QMenu(exportBtn);
+    QAction *mdExportAction = exportMenu->addAction(QStringLiteral("Export as Markdown (.md)"));
+    QAction *pdfExportAction = exportMenu->addAction(QStringLiteral("Export as PDF (.pdf)"));
+    exportBtn->setMenu(exportMenu);
+    connect(mdExportAction, &QAction::triggered, this, &MainWindow::exportCurrentConversationAsMarkdown);
+    connect(pdfExportAction, &QAction::triggered, this, &MainWindow::exportCurrentConversationAsPdf);
+    headerLayout->addWidget(exportBtn);
 
     layout->addWidget(headerBar);
 
@@ -2672,6 +2693,72 @@ void MainWindow::onLoadHistorySession(const QString &sessionId)
                                  "You can continue chatting where you left off.")
                       .arg(session.title, QString::number(session.messages.size())),
                   Col::AccentGlow);
+}
+
+QString MainWindow::exportFileName(ChatHistoryManager &history,
+                                   const QString &extension) const
+{
+    const ChatSession session = history.loadSession(history.currentSessionId());
+    QString name = session.title.simplified();
+    name.replace(QRegularExpression(QStringLiteral("[^\\w\\- ]+")), QString());
+    name.replace(QLatin1Char(' '), QLatin1Char('_'));
+    return name.isEmpty() ? QStringLiteral("conversation") + extension
+                          : name + extension;
+}
+
+void MainWindow::exportCurrentConversationAsMarkdown()
+{
+    ChatHistoryManager &history = m_agent.chatHistoryManager();
+    if (history.currentSessionId().isEmpty()) {
+        QMessageBox::information(this, QStringLiteral("No Conversation"),
+                                 QStringLiteral("There is no active conversation to export."));
+        return;
+    }
+
+    const QString md = history.exportToMarkdown(history.currentSessionId());
+    if (md.isEmpty()) { return; }
+
+    const QString path = QFileDialog::getSaveFileName(
+        this, QStringLiteral("Export Conversation as Markdown"),
+        exportFileName(history, QStringLiteral(".md")),
+        QStringLiteral("Markdown Files (*.md)"));
+
+    if (path.isEmpty()) { return; }
+
+    QFile f(path);
+    if (f.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        QTextStream out(&f);
+        out << md;
+    }
+}
+
+void MainWindow::exportCurrentConversationAsPdf()
+{
+    ChatHistoryManager &history = m_agent.chatHistoryManager();
+    if (history.currentSessionId().isEmpty()) {
+        QMessageBox::information(this, QStringLiteral("No Conversation"),
+                                 QStringLiteral("There is no active conversation to export."));
+        return;
+    }
+
+    const QString html = history.exportToHtml(history.currentSessionId());
+    if (html.isEmpty()) { return; }
+
+    const QString path = QFileDialog::getSaveFileName(
+        this, QStringLiteral("Export Conversation as PDF"),
+        exportFileName(history, QStringLiteral(".pdf")),
+        QStringLiteral("PDF Files (*.pdf)"));
+
+    if (path.isEmpty()) { return; }
+
+    QString error;
+    if (!ExportUtils::writeHtmlToPdf(html,
+                                     history.loadSession(history.currentSessionId()).title,
+                                     path, &error)) {
+        QMessageBox::warning(
+            this, QStringLiteral("Export Failed"),
+            QStringLiteral("Could not save the conversation as a PDF.\n%1").arg(error));
+    }
 }
 
 void MainWindow::onCaptureFromCamera()

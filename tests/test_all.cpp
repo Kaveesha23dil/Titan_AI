@@ -408,9 +408,22 @@ private slots:
         QVERIFY(txt.contains(QStringLiteral("You:")));
         QVERIFY(txt.contains(QStringLiteral("TitanAI:")));
 
+        // HTML (used as the source for PDF export)
+        const QString html = mgr.exportToHtml(sessionId);
+        QVERIFY(!html.isEmpty());
+        QVERIFY(html.contains(QStringLiteral("<html")));
+        QVERIFY(html.contains(QStringLiteral("Export Test")));
+        QVERIFY(html.contains(QStringLiteral("Hello export world.")));
+        QVERIFY(html.contains(QStringLiteral("Export response here.")));
+        QVERIFY(html.contains(QStringLiteral("msg-user")));
+        QVERIFY(html.contains(QStringLiteral("msg-assistant")));
+
+        // Unknown sessions export as empty strings
+        QVERIFY(mgr.exportToHtml(QStringLiteral("conv_does_not_exist")).isEmpty());
+
         // Cleanup
         mgr.deleteSession(sessionId);
-        std::cout << "[PASS] ChatHistory export (Markdown + plain text)" << std::endl;
+        std::cout << "[PASS] ChatHistory export (Markdown + plain text + HTML/PDF source)" << std::endl;
     }
 
     // ── Translation Assistant Tests ────────────────────────────────────────────

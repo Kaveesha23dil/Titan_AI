@@ -149,6 +149,9 @@ public:
     /// Exports a session as a Markdown transcript string.
     [[nodiscard]] QString exportToMarkdown(const QString &sessionId) const;
 
+    /// Exports a session as a self-contained HTML document (used for PDF export).
+    [[nodiscard]] QString exportToHtml(const QString &sessionId) const;
+
     /// Exports a session as a plain-text transcript string.
     [[nodiscard]] QString exportToPlainText(const QString &sessionId) const;
 

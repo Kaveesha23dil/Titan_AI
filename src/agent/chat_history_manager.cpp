@@ -418,6 +418,83 @@ QString ChatHistoryManager::exportToMarkdown(const QString &sessionId) const
     return md;
 }
 
+QString ChatHistoryManager::exportToHtml(const QString &sessionId) const
+{
+    ChatSession session = loadSessionFromDisk(sessionId);
+    if (session.id.isEmpty()) {
+        return {};
+    }
+
+    static const QString kCss = QStringLiteral(R"(
+        body { font-family: 'DejaVu Sans','Inter','Segoe UI',sans-serif; color:#1f2937;
+               margin:0; padding:24px; background:#ffffff; }
+        h1 { font-size:22px; color:#111827; margin:0 0 4px 0; }
+        .meta { font-size:12px; color:#6b7280; margin:0 0 18px 0; }
+        .msg { margin:10px 0; padding:12px 14px; border-radius:6px;
+               border:1px solid #e5e7eb; page-break-inside:avoid; }
+        .msg-user      { background:#f0f9ff; border-left:4px solid #06b6d4; }
+        .msg-assistant { background:#f5f3ff; border-left:4px solid #6366f1; }
+        .msg-error     { background:#fef2f2; border-left:4px solid #ef4444; }
+        .msg-tool      { background:#f8fafc; border-left:4px solid #64748b; }
+        .sender { font-size:11px; font-weight:700; color:#374151; margin-bottom:4px; }
+        .ts { font-weight:400; color:#9ca3af; }
+        .content { font-size:13px; line-height:1.55; word-break:break-word;
+                   white-space:pre-wrap; }
+        .image-note { font-size:11px; color:#4f46e5; margin-top:4px; }
+        .empty { color:#9ca3af; text-align:center; font-size:14px; padding:40px; }
+    )");
+
+    QString html;
+    html += QStringLiteral("<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n");
+    html += QStringLiteral("<title>%1</title>\n").arg(session.title.toHtmlEscaped());
+    html += QStringLiteral("<style>%1</style>\n</head>\n<body>\n").arg(kCss);
+
+    html += QStringLiteral("<h1>%1</h1>\n").arg(session.title.toHtmlEscaped());
+    html += QStringLiteral(
+                "<p class='meta'>%1 messages &nbsp;·&nbsp; Created %2 &nbsp;·&nbsp; Updated %3</p>\n")
+                .arg(session.messages.size())
+                .arg(session.createdAt.toString(QStringLiteral("yyyy-MM-dd hh:mm")))
+                .arg(session.updatedAt.toString(QStringLiteral("yyyy-MM-dd hh:mm")));
+
+    for (const ChatMessage &msg : session.messages) {
+        const QString cssClass =
+            msg.role == QStringLiteral("user")      ? QStringLiteral("msg-user") :
+            msg.role == QStringLiteral("assistant") ? QStringLiteral("msg-assistant") :
+            msg.role == QStringLiteral("error")     ? QStringLiteral("msg-error") :
+            QStringLiteral("msg-tool");
+
+        const QString roleLabel =
+            msg.role == QStringLiteral("user")      ? QStringLiteral("You") :
+            msg.role == QStringLiteral("assistant") ? QStringLiteral("TitanAI") :
+            msg.role == QStringLiteral("error")     ? QStringLiteral("Error") :
+            QStringLiteral("Tool");
+
+        QString escapedContent = msg.content.toHtmlEscaped();
+
+        html += QStringLiteral("<div class='msg %1'>\n").arg(cssClass);
+        html += QStringLiteral(
+                    "<div class='sender'>%1 <span class='ts'>· %2</span></div>\n")
+                    .arg(roleLabel.toHtmlEscaped(),
+                         msg.timestamp.toString(QStringLiteral("hh:mm")));
+        if (!escapedContent.isEmpty()) {
+            html += QStringLiteral("<div class='content'>%1</div>\n").arg(escapedContent);
+        }
+        if (msg.hasImage) {
+            html += QStringLiteral(
+                        "<div class='image-note'>📎 Image attached</div>\n");
+        }
+        html += QStringLiteral("</div>\n");
+    }
+
+    if (session.messages.isEmpty()) {
+        html += QStringLiteral(
+                    "<div class='empty'>No messages in this conversation.</div>\n");
+    }
+
+    html += QStringLiteral("</body>\n</html>\n");
+    return html;
+}
+
 QString ChatHistoryManager::exportToPlainText(const QString &sessionId) const
 {
     ChatSession session = loadSessionFromDisk(sessionId);
