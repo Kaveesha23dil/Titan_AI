@@ -2131,11 +2131,6 @@ void MainWindow::onResponseReceived(const QString &response)
     m_streamActive = false;
     m_streamBlockStarted = false;
     setInputEnabled(true);
-
-    const VoiceEngine::Config voiceConfig = m_voiceEngine.config();
-    if (voiceConfig.voiceEnabled && voiceConfig.readAloudEnabled) {
-        m_voiceEngine.speak(response);
-    }
 }
 
 void MainWindow::onErrorOccurred(const QString &error)
