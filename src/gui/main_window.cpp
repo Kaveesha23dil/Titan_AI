@@ -243,6 +243,35 @@ QIcon MainWindow::createVectorIcon(const QString &name, int size)
         meridian2.moveTo(cx, m);
         meridian2.cubicTo(cx - r * 0.55, m + r * 0.4, cx - r * 0.55, cy + r * 0.4, cx, s - m);
         p.drawPath(meridian2);
+    } else if (name == QLatin1String("meeting")) {
+        // Notepad with handwritten lines + pencil
+        QRectF pad(m, m + 1, s - 2 * m, s - 2 * m - 1);
+        p.drawRoundedRect(pad, 3, 3);
+        // Spiral binding rings along the top edge
+        p.setBrush(QColor(Col::TextSecondary));
+        for (qreal kx = pad.left() + 4; kx <= pad.right() - 4; kx += 6) {
+            p.drawEllipse(QPointF(kx, pad.top() + 1.5), 1.4, 1.4);
+        }
+        p.setBrush(Qt::NoBrush);
+        // Ruled lines
+        p.setPen(QPen(QColor(Col::TextSecondary), 0.8));
+        for (qreal y = pad.top() + 6; y <= pad.bottom() - 4; y += 3.2) {
+            p.drawLine(QPointF(pad.left() + 3, y), QPointF(pad.right() - 3, y));
+        }
+        // Pencil diagonal from top-right, pencil tip at bottom-right
+        p.setPen(QPen(QColor(Col::Accent), 1.6));
+        const QPointF tip(pad.right() - 1, pad.bottom() - 1);
+        const QPointF butt(pad.right() - 6, pad.top() + 3);
+        p.drawLine(butt, tip);
+        // Pencil tip (triangle)
+        QPainterPath pencilTip;
+        pencilTip.moveTo(tip);
+        pencilTip.lineTo(pad.right() - 4, pad.bottom() - 4);
+        pencilTip.lineTo(pad.right() - 4, pad.bottom() - 6);
+        pencilTip.closeSubpath();
+        p.setPen(QPen(QColor(Col::AccentCyan), 1.0));
+        p.setBrush(QColor(Col::AccentGlow));
+        p.drawPath(pencilTip);
     }
 
     p.end();
@@ -383,6 +412,7 @@ QWidget *MainWindow::createSidebar()
     m_navCalendar = makeNavBtn(QStringLiteral("calendar"), QStringLiteral("Calendar Settings"));
     m_navHistory = makeNavBtn(QStringLiteral("history"),   QStringLiteral("Chat History & Search (Ctrl+H)"));
     m_navTranslate = makeNavBtn(QStringLiteral("translate"), QStringLiteral("Translation Assistant (Ctrl+Alt+T)"));
+    m_navMeeting = makeNavBtn(QStringLiteral("meeting"),   QStringLiteral("Meeting Notes – Record & Summarize (Ctrl+M)"));
 
     m_navHome->setChecked(true);
 
@@ -402,6 +432,7 @@ QWidget *MainWindow::createSidebar()
     connect(m_navVoiceSettings, &QPushButton::clicked, this, &MainWindow::onVoiceSettings);
     connect(m_navHistory, &QPushButton::clicked, this, &MainWindow::onOpenChatHistory);
     connect(m_navTranslate, &QPushButton::clicked, this, &MainWindow::onOpenTranslationAssistant);
+    connect(m_navMeeting, &QPushButton::clicked, this, &MainWindow::onOpenMeetingNotes);
     connect(m_navSettings, &QPushButton::clicked, this, [this]() { navigateTo(3); });
 
     return sidebar;
@@ -1942,6 +1973,10 @@ MainWindow::MainWindow(QWidget *parent)
     auto *shortcutTranslate2 = new QShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_T), this);
     connect(shortcutTranslate2, &QShortcut::activated, this, &MainWindow::onOpenTranslationAssistant);
 
+    // ── Keyboard shortcut for Meeting Notes ───────────────────────────────────
+    auto *shortcutMeeting = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_M), this);
+    connect(shortcutMeeting, &QShortcut::activated, this, &MainWindow::onOpenMeetingNotes);
+
     // Context menu on chat display for "Translate Selected Text"
     if (m_chatDisplay) {
         m_chatDisplay->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -2650,6 +2685,40 @@ void MainWindow::onTranslationSendToChat(const QString &text)
     navigateTo(1);
     appendMessage(QStringLiteral("You"), text, Col::AccentGlow);
     m_agent.sendMessage(text);
+}
+
+void MainWindow::onOpenMeetingNotes()
+{
+    if (m_meetingDialog) {
+        m_meetingDialog->raise();
+        m_meetingDialog->activateWindow();
+        return;
+    }
+
+    auto *dlg = new MeetingNotesDialog(&m_agent, this);
+    dlg->setObjectName(QStringLiteral("meetingNotesDialog"));
+    connect(dlg, &MeetingNotesDialog::sendToChatRequested,
+            this, &MainWindow::onMeetingSendToChat);
+    connect(dlg, &QDialog::destroyed, this, [this, dlg]() {
+        if (m_meetingDialog == dlg) {
+            m_meetingDialog = nullptr;
+        }
+    });
+    m_meetingDialog = dlg;
+    dlg->show();
+    dlg->raise();
+    dlg->activateWindow();
+}
+
+void MainWindow::onMeetingSendToChat(const QString &text)
+{
+    if (text.trimmed().isEmpty()) return;
+    navigateTo(1);
+    appendMessage(QStringLiteral("You"), QStringLiteral("Meeting summary requested."), Col::AccentGlow);
+    appendMessage(QStringLiteral("TitanAI"), text, Col::AccentGlow);
+    m_agent.chatHistoryManager().appendMessage(QStringLiteral("user"),
+                                               QStringLiteral("Meeting summary requested."));
+    m_agent.chatHistoryManager().appendMessage(QStringLiteral("assistant"), text);
 }
 
 void MainWindow::onLoadHistorySession(const QString &sessionId)
