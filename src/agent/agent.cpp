@@ -3,8 +3,10 @@
 #include <QBuffer>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QMap>
 #include <QRegularExpression>
+#include <QStandardPaths>
 #include <QTimer>
 
 #include <memory>
@@ -53,6 +55,19 @@ Agent::Agent(QObject *parent)
     connect(&m_webSearch, &WebSearch::searchStarted, this, &Agent::webSearchStarted);
     connect(&m_webSearch, &WebSearch::searchFinished, this, &Agent::onWebSearchFinished);
     connect(&m_webSearch, &WebSearch::searchError, this, &Agent::onWebSearchError);
+
+    // Local RAG: surface background indexing results in the chat.
+    connect(&m_ragManager, &RagManager::indexingFinished, this,
+            [this](int filesIndexed, int chunksIndexed) {
+                emit toolOutputReceived(
+                    QStringLiteral("📚 Knowledge base updated — indexed %1 file(s) into %2 chunk(s).")
+                        .arg(filesIndexed)
+                        .arg(chunksIndexed));
+            });
+    connect(&m_ragManager, &RagManager::indexingError, this,
+            [this](const QString &error) {
+                emit toolOutputReceived(QStringLiteral("❌ Knowledge base error: %1").arg(error));
+            });
 }
 
 void Agent::initializeModel(const QString &model)
@@ -124,7 +139,18 @@ void Agent::sendMessage(const QString &message)
         return;
     }
 
+    if (handleRagQuery(message)) {
+        return;
+    }
+
     if (handleWebSearchQuery(message)) {
+        return;
+    }
+
+    // Automatically ground normal chat in the local knowledge base when one is
+    // available and grounding is enabled.
+    if (m_ragAutoGround && !m_ragQueryInFlight && !m_ragManager.isEmpty()) {
+        startRagGroundedAnswer(message, message);
         return;
     }
 
@@ -1024,6 +1050,21 @@ TranslationAssistant &Agent::translationAssistant()
 WebSearch &Agent::webSearch()
 {
     return m_webSearch;
+}
+
+RagManager &Agent::ragManager()
+{
+    return m_ragManager;
+}
+
+void Agent::setRagAutoGround(bool enabled)
+{
+    m_ragAutoGround = enabled;
+}
+
+bool Agent::ragAutoGround() const
+{
+    return m_ragAutoGround;
 }
 
 void Agent::startNewConversation()
@@ -1968,4 +2009,286 @@ void Agent::onWebSearchError(const QString &error)
                                        "Check your internet connection and try again.")
                             .arg(error);
     emit responseReceived(msg);
+}
+
+namespace {
+
+QString extractPathFromMessage(const QString &message)
+{
+    static const QRegularExpression pathRe(
+        QStringLiteral("(\"[^\"]+\"|'[^']+'|(?:~|/|\\./|\\.\\./)[^\\s\"']+)"));
+    const QRegularExpressionMatch match = pathRe.match(message);
+    if (!match.hasMatch()) {
+        return {};
+    }
+
+    QString path = match.captured(1);
+    if (path.size() >= 2
+        && ((path.startsWith(QLatin1Char('"')) && path.endsWith(QLatin1Char('"')))
+            || (path.startsWith(QLatin1Char('\'')) && path.endsWith(QLatin1Char('\''))))) {
+        path = path.mid(1, path.size() - 2);
+    }
+
+    if (path == QStringLiteral("~")) {
+        return QDir::homePath();
+    }
+    if (path.startsWith(QStringLiteral("~/"))) {
+        return QDir::homePath() + path.mid(1);
+    }
+    return path;
+}
+
+QString defaultRagTarget(const QString &lower, const QString &projectDirectory)
+{
+    const QString documents =
+        QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+
+    if (lower.contains(QStringLiteral("download"))) {
+        const QString downloads =
+            QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
+        if (!downloads.isEmpty()) {
+            return downloads;
+        }
+    }
+
+    if (lower.contains(QStringLiteral("note"))) {
+        const QString notes = documents + QStringLiteral("/Notes");
+        if (QDir(notes).exists()) {
+            return notes;
+        }
+    }
+
+    if (lower.contains(QStringLiteral("document")) || lower.contains(QStringLiteral("file"))) {
+        if (!documents.isEmpty()) {
+            return documents;
+        }
+    }
+
+    if (lower.contains(QStringLiteral("home"))) {
+        return QDir::homePath();
+    }
+
+    if (lower.contains(QStringLiteral("project")) || lower.contains(QStringLiteral("code"))
+        || lower.contains(QStringLiteral("repo"))) {
+        return projectDirectory.isEmpty() ? QDir::currentPath() : projectDirectory;
+    }
+
+    return projectDirectory.isEmpty() ? QDir::currentPath() : projectDirectory;
+}
+
+} // namespace
+
+bool Agent::handleRagQuery(const QString &message)
+{
+    const QString lower = message.toLower().simplified();
+
+    const bool mentionsKb =
+        lower.contains(QStringLiteral("knowledge base"))
+        || lower.contains(QStringLiteral("knowledge-base"))
+        || lower.contains(QStringLiteral("rag index"))
+        || lower.contains(QStringLiteral("document index"));
+
+    // ── Clear the whole index ────────────────────────────────────────────
+    if (mentionsKb
+        && (lower.contains(QStringLiteral("clear"))
+            || lower.contains(QStringLiteral("reset"))
+            || lower.contains(QStringLiteral("empty"))
+            || lower.contains(QStringLiteral("delete knowledge base"))
+            || lower.contains(QStringLiteral("remove all")))) {
+        m_ragManager.clear();
+        emit responseReceived(
+            QStringLiteral("🗑️ Local knowledge base cleared. Index some documents again anytime."));
+        return true;
+    }
+
+    // ── Remove a single source ───────────────────────────────────────────
+    if (mentionsKb
+        && (lower.contains(QStringLiteral("remove")) || lower.contains(QStringLiteral("delete")))) {
+        const QString path = extractPathFromMessage(message);
+        if (path.isEmpty()) {
+            emit responseReceived(
+                QStringLiteral("Tell me the full path of the document to remove, e.g. "
+                               "*\"remove /home/you/notes/plan.md from my knowledge base\"*."));
+            return true;
+        }
+        m_ragManager.removeSource(path);
+        emit responseReceived(QStringLiteral("🗑️ Removed **%1** from the knowledge base.").arg(path));
+        return true;
+    }
+
+    // ── Status / listing ─────────────────────────────────────────────────
+    const bool wantsStatus =
+        lower.contains(QStringLiteral("knowledge base status"))
+        || lower.contains(QStringLiteral("rag status"))
+        || lower.startsWith(QStringLiteral("list knowledge base"))
+        || lower.contains(QStringLiteral("list indexed"))
+        || lower.contains(QStringLiteral("show indexed"))
+        || lower.contains(QStringLiteral("what's in my knowledge base"))
+        || lower.contains(QStringLiteral("what is in my knowledge base"))
+        || lower == QStringLiteral("knowledge base")
+        || lower == QStringLiteral("show knowledge base");
+
+    if (wantsStatus) {
+        const QStringList indexedSources = m_ragManager.sources();
+        if (indexedSources.isEmpty()) {
+            emit responseReceived(
+                QStringLiteral("📚 Your local knowledge base is empty. Try "
+                               "*\"index my documents\"* or click the Knowledge Base button."));
+            return true;
+        }
+
+        QString report = QStringLiteral("📚 **Local knowledge base** — %1 document(s), %2 chunk(s)\n\n")
+                             .arg(m_ragManager.documentCount())
+                             .arg(m_ragManager.chunkCount());
+        for (const QString &source : indexedSources) {
+            report += QStringLiteral("• `%1` (%2 chunks)\n")
+                          .arg(source)
+                          .arg(m_ragManager.chunkCountForSource(source));
+        }
+        report += QStringLiteral("\nAsk about them with *\"ask my documents …\"* or just chat normally.");
+        emit responseReceived(report);
+        return true;
+    }
+
+    // ── Index / add documents ────────────────────────────────────────────
+    const bool wantsIndex =
+        lower.contains(QStringLiteral("reindex"))
+        || lower.contains(QStringLiteral("re-index"))
+        || lower.contains(QStringLiteral("rebuild knowledge base"))
+        || (mentionsKb && (lower.contains(QStringLiteral("index"))
+                           || lower.contains(QStringLiteral("build"))
+                           || lower.contains(QStringLiteral("add"))))
+        || lower.contains(QStringLiteral("index my documents"))
+        || lower.contains(QStringLiteral("index my notes"))
+        || lower.contains(QStringLiteral("index my files"))
+        || lower.contains(QStringLiteral("index my project"))
+        || lower.contains(QStringLiteral("index this folder"))
+        || lower.contains(QStringLiteral("index this directory"))
+        || lower.contains(QStringLiteral("index the folder"))
+        || lower.contains(QStringLiteral("index documents"))
+        || lower.contains(QStringLiteral("index notes"))
+        || (lower.startsWith(QStringLiteral("index "))
+            && (lower.contains(QLatin1Char('/')) || lower.contains(QLatin1Char('~'))
+                || lower.contains(QStringLiteral("folder"))
+                || lower.contains(QStringLiteral("directory"))))
+        || (lower.contains(QStringLiteral("add "))
+            && (lower.contains(QStringLiteral("to knowledge base"))
+                || lower.contains(QStringLiteral("to my knowledge base"))));
+
+    if (wantsIndex) {
+        QString target = extractPathFromMessage(message);
+        if (target.isEmpty()) {
+            target = defaultRagTarget(lower, m_projectDirectory);
+        }
+
+        const QFileInfo info(target);
+        if (!info.exists()) {
+            emit responseReceived(
+                QStringLiteral("📂 I couldn't find `%1`. Check the path and try again.").arg(target));
+            return true;
+        }
+
+        const bool reset = lower.contains(QStringLiteral("reindex"))
+                           || lower.contains(QStringLiteral("re-index"))
+                           || lower.contains(QStringLiteral("rebuild"));
+
+        emit toolOutputReceived(
+            QStringLiteral("📚 Indexing %1 — this runs locally and may take a while…")
+                .arg(info.absoluteFilePath()));
+        m_ragManager.indexPaths({info.absoluteFilePath()}, reset);
+        return true;
+    }
+
+    // ── Explicit question about indexed documents ────────────────────────
+    static const QStringList questionTriggers = {
+        QStringLiteral("ask my documents about"),
+        QStringLiteral("ask my documents"),
+        QStringLiteral("ask my notes about"),
+        QStringLiteral("ask my notes"),
+        QStringLiteral("search my documents for"),
+        QStringLiteral("search my documents"),
+        QStringLiteral("search my notes for"),
+        QStringLiteral("search my notes"),
+        QStringLiteral("what do my documents say about"),
+        QStringLiteral("what do my notes say about"),
+        QStringLiteral("according to my documents"),
+        QStringLiteral("according to my notes"),
+        QStringLiteral("based on my documents"),
+        QStringLiteral("based on my notes"),
+        QStringLiteral("from my documents"),
+        QStringLiteral("from my notes"),
+        QStringLiteral("in my documents"),
+        QStringLiteral("in my notes"),
+        QStringLiteral("check my documents for"),
+        QStringLiteral("check my notes for"),
+    };
+
+    int triggerPos = -1;
+    QString trigger;
+    for (const QString &candidate : questionTriggers) {
+        const int pos = lower.indexOf(candidate);
+        if (pos >= 0 && (triggerPos < 0 || pos < triggerPos)) {
+            triggerPos = pos;
+            trigger = candidate;
+        }
+    }
+
+    if (triggerPos >= 0) {
+        if (m_ragManager.isEmpty()) {
+            emit responseReceived(
+                QStringLiteral("📚 Your local knowledge base is empty. Index some documents first "
+                               "with *\"index my documents\"* or the Knowledge Base dialog."));
+            return true;
+        }
+
+        QString query = message.mid(triggerPos + trigger.length()).trimmed();
+        query.remove(QRegularExpression(QStringLiteral("^[\\s,:;\\-–—]+")));
+        if (query.isEmpty()) {
+            emit responseReceived(
+                QStringLiteral("What would you like me to look up in your documents?"));
+            return true;
+        }
+
+        startRagGroundedAnswer(message, query);
+        return true;
+    }
+
+    return false;
+}
+
+void Agent::startRagGroundedAnswer(const QString &message, const QString &query)
+{
+    m_ragQueryInFlight = true;
+    emit toolOutputReceived(QStringLiteral("🔎 Searching your knowledge base for \"%1\"…").arg(query));
+
+    m_ragManager.retrieve(query, 5,
+        [this, message, query](const QString &context, const QList<RagManager::SearchHit> &hits) {
+            m_ragQueryInFlight = false;
+
+            if (context.isEmpty() || hits.isEmpty()) {
+                // Retrieval unavailable or empty: answer without grounding.
+                m_ollamaClient.sendPrompt(message);
+                return;
+            }
+
+            QStringList sources;
+            for (const RagManager::SearchHit &hit : hits) {
+                const QString name = QFileInfo(hit.source).fileName();
+                if (!sources.contains(name)) {
+                    sources.append(name);
+                }
+            }
+            emit ragContextUsed(sources);
+
+            const QString prompt = QStringLiteral(
+                "You are TitanAI, a local AI assistant. Answer the user's question using the "
+                "retrieved excerpts from their own documents below. Cite the source file names "
+                "you relied on. If the excerpts do not contain the answer, say so honestly and "
+                "answer from general knowledge instead of inventing details.\n\n"
+                "%1\n\n"
+                "User question: %2")
+                .arg(context, query);
+
+            m_ollamaClient.sendPrompt(prompt);
+        });
 }

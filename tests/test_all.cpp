@@ -2,6 +2,7 @@
 #include <QDir>
 #include <QFile>
 #include <QTemporaryDir>
+#include <QSignalSpy>
 #include <QTest>
 #include <iostream>
 
@@ -15,6 +16,9 @@
 #include "tools/update_checker.hpp"
 #include "tools/translation_assistant.hpp"
 #include "tools/web_search.hpp"
+#include "rag/rag_manager.hpp"
+#include "rag/text_chunker.hpp"
+#include "rag/text_extractor.hpp"
 #include "learning/task_tracker.hpp"
 #include "learning/activity_analyzer.hpp"
 #include "learning/suggestion_engine.hpp"
@@ -720,6 +724,182 @@ private slots:
         QVERIFY(!out.trimmed().isEmpty());
 
         std::cout << "[PASS] WebSearch empty lifecycle (offline-safe)" << std::endl;
+    }
+
+    void testTextChunker() {
+        QString text;
+        for (int i = 1; i <= 120; ++i) {
+            text += QStringLiteral("Line %1: the quick brown fox jumps over the lazy dog.\n").arg(i);
+        }
+
+        const QList<TextChunk> chunks = TextChunker::chunkText(text, 500, 100);
+        QVERIFY(chunks.size() > 1);
+        QCOMPARE(chunks.first().startLine, 1);
+        QVERIFY(chunks.last().endLine >= 100);
+
+        for (const TextChunk &chunk : chunks) {
+            QVERIFY(!chunk.text.trimmed().isEmpty());
+            QVERIFY(chunk.endLine >= chunk.startLine);
+        }
+
+        QVERIFY(TextChunker::chunkText(QStringLiteral("   \n\t  ")).isEmpty());
+        std::cout << "[PASS] TextChunker splitting and line ranges" << std::endl;
+    }
+
+    void testTextExtractorDiscoveryAndRead() {
+        QTemporaryDir tempDir;
+        QVERIFY(tempDir.isValid());
+
+        const QString mdPath = tempDir.filePath(QStringLiteral("notes.md"));
+        const QString pyPath = tempDir.filePath(QStringLiteral("script.py"));
+        const QString binPath = tempDir.filePath(QStringLiteral("data.bin"));
+
+        {
+            QFile f(mdPath);
+            QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Text));
+            f.write("alpha\nbeta\n");
+        }
+        {
+            QFile f(pyPath);
+            QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Text));
+            f.write("print('hi')\n");
+        }
+        {
+            QFile f(binPath);
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write(QByteArray("\0\1\2", 3));
+        }
+
+        QVERIFY(QDir(tempDir.path()).mkpath(QStringLiteral(".git")));
+        QVERIFY(QDir(tempDir.path()).mkpath(QStringLiteral("node_modules")));
+        {
+            QFile f(tempDir.filePath(QStringLiteral(".git/secret.txt")));
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write("hidden");
+        }
+        {
+            QFile f(tempDir.filePath(QStringLiteral("node_modules/pkg.js")));
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write("ignored");
+        }
+
+        const QStringList files = TextExtractor::collectFiles({tempDir.path()});
+        QVERIFY(files.contains(mdPath));
+        QVERIFY(files.contains(pyPath));
+        QVERIFY(!files.contains(binPath));
+        QVERIFY(!files.contains(tempDir.filePath(QStringLiteral(".git/secret.txt"))));
+        QVERIFY(!files.contains(tempDir.filePath(QStringLiteral("node_modules/pkg.js"))));
+
+        QString error;
+        const QString content = TextExtractor::extractText(mdPath, &error);
+        QVERIFY2(error.isEmpty(), error.toUtf8().constData());
+        QVERIFY(content.contains(QStringLiteral("alpha")));
+
+        QString binError;
+        const QString binContent = TextExtractor::extractText(binPath, &binError);
+        QVERIFY(binContent.isEmpty());
+        QVERIFY(!binError.isEmpty());
+
+        QVERIFY(TextExtractor::isSupportedFile(mdPath));
+        QVERIFY(!TextExtractor::isSupportedFile(binPath));
+        std::cout << "[PASS] TextExtractor file discovery and text reading" << std::endl;
+    }
+
+    void testRagManagerEmptyStateAndFormatting() {
+        QTemporaryDir tempDir;
+        QVERIFY(tempDir.isValid());
+
+        RagManager manager;
+        manager.setStorageDirectory(tempDir.filePath(QStringLiteral("rag")));
+
+        QVERIFY(manager.isEmpty());
+        QCOMPARE(manager.chunkCount(), 0);
+        QCOMPARE(manager.documentCount(), 0);
+        QVERIFY(manager.sources().isEmpty());
+        QVERIFY(!manager.isIndexing());
+
+        QList<RagManager::SearchHit> hits;
+        RagManager::SearchHit hit;
+        hit.source = QStringLiteral("/home/user/docs/notes.md");
+        hit.text = QStringLiteral("The project budget is 42 dollars.");
+        hit.startLine = 3;
+        hit.endLine = 4;
+        hit.score = 0.87f;
+        hits.append(hit);
+
+        const QString context = RagManager::formatHitsForPrompt(
+            QStringLiteral("what is the budget"), hits);
+        QVERIFY(context.contains(QStringLiteral("Local knowledge base context")));
+        QVERIFY(context.contains(QStringLiteral("notes.md")));
+        QVERIFY(context.contains(QStringLiteral("42 dollars")));
+        QVERIFY(context.contains(QStringLiteral("lines 3-4")));
+
+        QVERIFY(RagManager::formatHitsForPrompt(QStringLiteral("x"), {}).isEmpty());
+        std::cout << "[PASS] RagManager empty state and prompt formatting" << std::endl;
+    }
+
+    void testRagManagerLoadsPersistedIndex() {
+        QTemporaryDir tempDir;
+        QVERIFY(tempDir.isValid());
+
+        const QString ragDir = tempDir.filePath(QStringLiteral("rag"));
+        QVERIFY(QDir().mkpath(ragDir));
+
+        const QByteArray indexJson = R"({
+            "version": 1,
+            "embeddingModel": "nomic-embed-text",
+            "chunks": [
+                {
+                    "source": "/home/user/docs/plan.md",
+                    "text": "Ship the local RAG feature.",
+                    "startLine": 10,
+                    "endLine": 12,
+                    "embedding": [0.1, 0.2, 0.3]
+                }
+            ]
+        })";
+
+        {
+            QFile f(ragDir + QStringLiteral("/index.json"));
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write(indexJson);
+        }
+
+        RagManager manager;
+        manager.setStorageDirectory(ragDir);
+
+        QCOMPARE(manager.chunkCount(), 1);
+        QCOMPARE(manager.documentCount(), 1);
+        QCOMPARE(manager.sources().size(), 1);
+        QCOMPARE(manager.sources().first(), QStringLiteral("/home/user/docs/plan.md"));
+        QCOMPARE(manager.chunkCountForSource(QStringLiteral("/home/user/docs/plan.md")), 1);
+
+        // A different embedding model cannot reuse the stored vectors.
+        manager.setEmbeddingModel(QStringLiteral("another-embed-model"));
+        QCOMPARE(manager.chunkCount(), 0);
+
+        std::cout << "[PASS] RagManager persistent index load + model invalidation" << std::endl;
+    }
+
+    void testRagIndexingRejectsUnsupportedFiles() {
+        QTemporaryDir tempDir;
+        QVERIFY(tempDir.isValid());
+
+        {
+            QFile f(tempDir.filePath(QStringLiteral("image.bin")));
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write(QByteArray("\0\1\2", 3));
+        }
+
+        RagManager manager;
+        manager.setStorageDirectory(tempDir.filePath(QStringLiteral("rag")));
+
+        QSignalSpy errorSpy(&manager, &RagManager::indexingError);
+        manager.indexPaths({tempDir.path()});
+
+        QCOMPARE(errorSpy.count(), 1);
+        QVERIFY(!manager.isIndexing());
+        std::cout << "[PASS] RagManager rejects unsupported files (offline-safe)" << std::endl;
     }
 
     void testMeetingRecorderSttAvailability() {

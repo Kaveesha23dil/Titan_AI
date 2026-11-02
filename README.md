@@ -34,6 +34,47 @@ vision-capable local model (the default model `gemma3:4b` supports images):
 The image is downscaled and compressed before being sent to the model, and a thumbnail
 of every analyzed image is shown in the chat.
 
+## Local Knowledge Base (RAG)
+
+TitanAI can index your own documents and ground its answers in them — fully offline,
+using **Ollama embeddings** and a local vector index. Nothing is uploaded.
+
+- **Index a folder or files** from the sidebar **Knowledge Base** button (books icon) or
+  the Developer Hub card. Supported inputs include PDF, Markdown, plain text, notes and
+  most source-code/config formats (recursive folder indexing skips `.git`, `node_modules`,
+  `build`, caches, etc.).
+- **Automatic grounding** — once documents are indexed, normal chat answers are retrieved
+  with cosine similarity over your chunks and answered with source citations. Toggle this
+  off in the Knowledge Base dialog if you prefer plain chat.
+- **Explicit questions** — say *"ask my documents about …"*, *"search my notes for …"*,
+  *"according to my documents …"* or *"what do my notes say about …"*.
+- **Manage the index** — say *"index my documents"*, *"index /path/to/folder"*,
+  *"knowledge base status"*, *"remove <path> from my knowledge base"*, or
+  *"clear knowledge base"*. The dialog also supports add/remove/reindex/clear and shows
+  live progress.
+- **Citations** — grounded replies mention the source file (and line range) used.
+
+Embedding setup (one-time):
+
+```bash
+# Small, fast embedding model (~270 MB)
+ollama pull nomic-embed-text
+
+# PDF text extraction (optional, for .pdf files)
+sudo pacman -S poppler
+```
+
+TitanAI uses Ollama's `/api/embeddings` endpoint (falling back to `/api/embed` on newer
+servers). To use a different embedding model, set the environment variable before launch:
+
+```bash
+TITANAI_EMBED_MODEL=mxbai-embed-large ./build/TitanAI
+```
+
+The index is stored locally under your application data directory
+(`~/.local/share/TitanAI/TitanAI/rag/index.json` by default) and rebuilds automatically
+if you switch embedding models.
+
 ## File Organization
 
 TitanAI can help you tidy up messy folders. It works fully offline on any directory:

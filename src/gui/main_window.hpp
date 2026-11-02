@@ -77,6 +77,7 @@ private slots:
     void onOpenTranslationAssistant();
     void onTranslateSelectedText();
     void onTranslationSendToChat(const QString &text);
+    void onOpenKnowledgeBase();
     void onOpenMeetingNotes();
     void onMeetingSendToChat(const QString &text);
 
@@ -177,6 +178,8 @@ private:
     // --- Meeting Notes ---
     QPushButton   *m_navMeeting{nullptr};  ///< Sidebar meeting notes button
     MeetingNotesDialog *m_meetingDialog{nullptr}; ///< Single non-modal instance
+    // --- Local Knowledge Base (RAG) ---
+    QPushButton   *m_navKnowledge{nullptr}; ///< Sidebar knowledge base button
 
     // --- Shared Input Card ---
     QWidget *m_inputCard{nullptr};
