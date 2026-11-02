@@ -16,6 +16,7 @@
 #include "tools/update_checker.hpp"
 #include "tools/translation_assistant.hpp"
 #include "tools/web_search.hpp"
+#include "rag/rag_manager.hpp"
 #include "learning/task_tracker.hpp"
 #include "learning/activity_analyzer.hpp"
 #include "learning/suggestion_engine.hpp"
@@ -68,6 +69,11 @@ public:
 
     // Web Search
     [[nodiscard]] WebSearch &webSearch();
+
+    // Local Retrieval-Augmented Generation
+    [[nodiscard]] RagManager &ragManager();
+    void setRagAutoGround(bool enabled);
+    [[nodiscard]] bool ragAutoGround() const;
 
     // Chat History
     [[nodiscard]] ChatHistoryManager &chatHistoryManager();
@@ -125,6 +131,9 @@ signals:
     void webSearchFinished(const QString &groundedAnswer);
     void webSearchError(const QString &error);
 
+    // Local RAG signals
+    void ragContextUsed(const QStringList &sources);
+
 private slots:
     void onModelReady(const QString &model);
     void onPackageManagerFinished(bool success, const QString &summary);
@@ -149,6 +158,8 @@ private:
     bool handlePowerQuery(const QString &message);
     bool handleChatHistoryQuery(const QString &message);
     bool handleTranslationQuery(const QString &message);
+    bool handleRagQuery(const QString &message);
+    void startRagGroundedAnswer(const QString &message, const QString &query);
     void startPasteFix(const QString &message);
     void startBuildFix();
     void requestFix(const QList<CodeFixer::BuildError> &errors);
@@ -178,6 +189,9 @@ private:
     ChatHistoryManager m_chatHistoryManager;
     TranslationAssistant m_translationAssistant;
     WebSearch m_webSearch;
+    RagManager m_ragManager;
+    bool m_ragAutoGround{true};
+    bool m_ragQueryInFlight{false};
     bool m_codeDevelopmentEnabled{false};
     bool m_autoFixEnabled{false};
     bool m_codeFixInProgress{false};

@@ -5,6 +5,7 @@
 #include "gui/calendar_settings_dialog.hpp"
 #include "gui/chat_history_dialog.hpp"
 #include "gui/export_utils.hpp"
+#include "gui/knowledge_base_dialog.hpp"
 
 #include <QApplication>
 #include <QBuffer>
@@ -272,6 +273,20 @@ QIcon MainWindow::createVectorIcon(const QString &name, int size)
         p.setPen(QPen(QColor(Col::AccentCyan), 1.0));
         p.setBrush(QColor(Col::AccentGlow));
         p.drawPath(pencilTip);
+    } else if (name == QLatin1String("knowledge")) {
+        // Bookshelf / stack of documents
+        QRectF back(m + 2, s * 0.28, s - 2 * m - 4, s * 0.5);
+        p.drawRoundedRect(back, 3, 3);
+        QRectF front(m + 4, s * 0.36, s - 2 * m - 6, s * 0.5);
+        p.setBrush(QColor(Col::TextSecondary));
+        p.drawRoundedRect(front, 3, 3);
+        p.setBrush(Qt::NoBrush);
+        // Page lines
+        p.setPen(QPen(QColor(Col::BgDeep), 0.8));
+        for (qreal y = s * 0.44; y <= s * 0.72; y += 3.6) {
+            p.drawLine(QPointF(m + 8, y), QPointF(s - m - 8, y));
+        }
+        p.setPen(pen);
     }
 
     p.end();
@@ -413,6 +428,7 @@ QWidget *MainWindow::createSidebar()
     m_navHistory = makeNavBtn(QStringLiteral("history"),   QStringLiteral("Chat History & Search (Ctrl+H)"));
     m_navTranslate = makeNavBtn(QStringLiteral("translate"), QStringLiteral("Translation Assistant (Ctrl+Alt+T)"));
     m_navMeeting = makeNavBtn(QStringLiteral("meeting"),   QStringLiteral("Meeting Notes – Record & Summarize (Ctrl+M)"));
+    m_navKnowledge = makeNavBtn(QStringLiteral("knowledge"), QStringLiteral("Local Knowledge Base (RAG)"));
 
     m_navHome->setChecked(true);
 
@@ -433,6 +449,7 @@ QWidget *MainWindow::createSidebar()
     connect(m_navHistory, &QPushButton::clicked, this, &MainWindow::onOpenChatHistory);
     connect(m_navTranslate, &QPushButton::clicked, this, &MainWindow::onOpenTranslationAssistant);
     connect(m_navMeeting, &QPushButton::clicked, this, &MainWindow::onOpenMeetingNotes);
+    connect(m_navKnowledge, &QPushButton::clicked, this, &MainWindow::onOpenKnowledgeBase);
     connect(m_navSettings, &QPushButton::clicked, this, [this]() { navigateTo(3); });
 
     return sidebar;
@@ -874,6 +891,28 @@ QWidget *MainWindow::createDevHubPage()
     perfNote->setStyleSheet(QStringLiteral("color: %1; font-size: 11px;").arg(Col::TextMuted));
     perfLayout->addWidget(perfNote);
     layout->addWidget(perfBox);
+
+    // ── 📚 Local Knowledge Base (RAG) ───────────────────────
+    auto *knowledgeBox = new QGroupBox(QStringLiteral("📚  Local Knowledge Base (RAG)"), content);
+    auto *knowledgeLayout = new QVBoxLayout(knowledgeBox);
+    knowledgeLayout->setSpacing(12);
+
+    auto *knowledgeDesc = new QLabel(
+        QStringLiteral(
+            "Index PDFs, notes and source code into a private on-device knowledge base. "
+            "Chat answers are grounded in your own documents using local Ollama embeddings."),
+        knowledgeBox);
+    knowledgeDesc->setWordWrap(true);
+    knowledgeDesc->setStyleSheet(QStringLiteral(
+        "QLabel { color: %1; font-size: 13px; }").arg(Col::TextSecondary));
+    knowledgeLayout->addWidget(knowledgeDesc);
+
+    auto *knowledgeButton = makeActionBtn(knowledgeBox, QStringLiteral("Manage Knowledge Base"),
+                                          QStringLiteral("knowledge"),
+                                          QStringLiteral("Add folders or files, reindex, and toggle grounded answers"));
+    knowledgeLayout->addWidget(knowledgeButton, 0, Qt::AlignLeft);
+    connect(knowledgeButton, &QPushButton::clicked, this, &MainWindow::onOpenKnowledgeBase);
+    layout->addWidget(knowledgeBox);
 
     // ── 🔋 Power Management Card ────────────────────────────
     auto *powerBox = new QGroupBox(QStringLiteral("🔋  Power Management"), content);
@@ -1766,6 +1805,7 @@ MainWindow::MainWindow(QWidget *parent)
     m_buildCommand = m_settings.value(QStringLiteral("buildCommand")).toString();
     const bool autoFixEnabled = m_settings.value(QStringLiteral("autoFixEnabled"), false).toBool();
     const int updateInterval = m_settings.value(QStringLiteral("updateInterval"), 30).toInt();
+    m_agent.setRagAutoGround(m_settings.value(QStringLiteral("ragAutoGround"), true).toBool());
 
     m_autoFixCheck->setChecked(autoFixEnabled);
     m_projectEdit->setText(m_projectDirectory);
@@ -2700,6 +2740,15 @@ void MainWindow::onOpenMeetingNotes()
         }
     });
     m_meetingDialog = dlg;
+    dlg->show();
+    dlg->raise();
+    dlg->activateWindow();
+}
+
+void MainWindow::onOpenKnowledgeBase()
+{
+    auto *dlg = new KnowledgeBaseDialog(&m_agent, this);
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
     dlg->show();
     dlg->raise();
     dlg->activateWindow();
