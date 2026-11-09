@@ -56,6 +56,13 @@ Agent::Agent(QObject *parent)
     connect(&m_webSearch, &WebSearch::searchFinished, this, &Agent::onWebSearchFinished);
     connect(&m_webSearch, &WebSearch::searchError, this, &Agent::onWebSearchError);
 
+    // AI Terminal
+    connect(&m_terminalAssistant, &TerminalAssistant::proposalReady,
+            this, &Agent::onTerminalProposalReady);
+    connect(&m_terminalAssistant, &TerminalAssistant::generationFailed,
+            this, &Agent::onTerminalGenerationFailed);
+    m_terminalAssistant.setModel(m_ollamaClient.model());
+
     // Local RAG: surface background indexing results in the chat.
     connect(&m_ragManager, &RagManager::indexingFinished, this,
             [this](int filesIndexed, int chunksIndexed) {
@@ -78,6 +85,7 @@ void Agent::initializeModel(const QString &model)
 void Agent::onModelReady(const QString &model)
 {
     m_ollamaClient.setModel(model);
+    m_terminalAssistant.setModel(model);
     m_ollamaClient.warmUp();
     emit modelReady(model);
 }
@@ -88,6 +96,10 @@ void Agent::sendMessage(const QString &message)
     m_chatHistoryManager.appendMessage(QStringLiteral("user"), message);
 
     if (handleChatHistoryQuery(message)) {
+        return;
+    }
+
+    if (handleTerminalQuery(message)) {
         return;
     }
 
@@ -199,6 +211,7 @@ void Agent::sendImageMessage(const QImage &image, const QString &text)
 void Agent::setModel(const QString &model)
 {
     m_ollamaClient.setModel(model);
+    m_terminalAssistant.setModel(model);
 }
 
 void Agent::switchModel(const QString &model)
@@ -213,6 +226,7 @@ void Agent::switchModel(const QString &model)
     // Point the chat client at the new model immediately and clear stale history
     // so a prior conversation with the old model isn't sent to the new one.
     m_ollamaClient.setModel(model);
+    m_terminalAssistant.setModel(model);
     m_ollamaClient.clearHistory();
 
     // Ask the OllamaManager to verify the model is installed and warm it up in
@@ -1052,6 +1066,21 @@ WebSearch &Agent::webSearch()
     return m_webSearch;
 }
 
+TerminalAssistant &Agent::terminalAssistant()
+{
+    return m_terminalAssistant;
+}
+
+TerminalExecutor &Agent::terminalExecutor()
+{
+    return m_terminalExecutor;
+}
+
+TerminalHistoryManager &Agent::terminalHistoryManager()
+{
+    return m_terminalHistoryManager;
+}
+
 RagManager &Agent::ragManager()
 {
     return m_ragManager;
@@ -1887,6 +1916,165 @@ bool Agent::handleTranslationQuery(const QString &message)
 
     m_translationAssistant.translate(req);
     return true;
+}
+
+bool Agent::handleTerminalQuery(const QString &message)
+{
+    if (!TerminalAssistant::isTerminalRequest(message)) {
+        return false;
+    }
+
+    const QString lower = message.toLower().simplified();
+
+    // "Explain this command: ..." / "Explain `df -h`" should not generate or
+    // execute anything. Ask the model for a plain-English explanation only.
+    const bool wantsExplanation =
+        lower.contains(QStringLiteral("explain this command"))
+        || lower.contains(QStringLiteral("explain the command"))
+        || lower.contains(QStringLiteral("what does this command do"))
+        || lower.contains(QStringLiteral("explain this linux command"));
+
+    if (wantsExplanation) {
+        QString command;
+        static const QRegularExpression backtickRe(QStringLiteral("`([^`]+)`"));
+        const QRegularExpressionMatch backtickMatch = backtickRe.match(message);
+        if (backtickMatch.hasMatch()) {
+            command = backtickMatch.captured(1).trimmed();
+        } else {
+            const int colon = message.indexOf(QLatin1Char(':'));
+            if (colon >= 0 && colon + 1 < message.size()) {
+                command = message.mid(colon + 1).trimmed();
+            } else {
+                static const QStringList phrases = {
+                    QStringLiteral("explain this linux command"),
+                    QStringLiteral("explain this command"),
+                    QStringLiteral("explain the command"),
+                    QStringLiteral("what does this command do")
+                };
+                for (const QString &phrase : phrases) {
+                    const int pos = lower.indexOf(phrase);
+                    if (pos >= 0) {
+                        command = message.mid(pos + phrase.length()).trimmed();
+                        command.remove(QRegularExpression(QStringLiteral("^[\\s:,\\-]+")));
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (command.isEmpty()) {
+            emit responseReceived(
+                QStringLiteral("🖥️ Tell me the command you want explained, for example:\n"
+                               "*\"Explain this command: `df -h`\"*"));
+            return true;
+        }
+
+        if (m_terminalAssistant.isBusy()) {
+            emit responseReceived(QStringLiteral(
+                "TitanAI is already generating a response. Please wait for it to finish."));
+            return true;
+        }
+
+        emit toolOutputReceived(QStringLiteral("🖥️ Preparing a command explanation…"));
+
+        auto okConn = std::make_shared<QMetaObject::Connection>();
+        auto errConn = std::make_shared<QMetaObject::Connection>();
+        *okConn = connect(&m_terminalAssistant, &TerminalAssistant::explanationReady,
+            this, [this, okConn, errConn](const QString &explanation) {
+                disconnect(*okConn);
+                disconnect(*errConn);
+                emit responseReceived(
+                    QStringLiteral("🖥️ **Command explanation**\n\n%1").arg(explanation));
+            });
+        *errConn = connect(&m_terminalAssistant, &TerminalAssistant::explanationFailed,
+            this, [this, okConn, errConn](const QString &error) {
+                disconnect(*okConn);
+                disconnect(*errConn);
+                emit responseReceived(
+                    QStringLiteral("❌ **Command explanation failed:** %1").arg(error));
+            });
+
+        m_terminalAssistant.explainCommand(command, message);
+        return true;
+    }
+
+    if (m_terminalAssistant.isBusy()) {
+        emit responseReceived(QStringLiteral(
+            "TitanAI is already generating a response. Please wait for it to finish."));
+        return true;
+    }
+
+    if (m_terminalExecutor.isRunning()) {
+        emit responseReceived(QStringLiteral(
+            "A terminal command is currently running. Stop it in the AI Terminal page "
+            "before generating another one."));
+        return true;
+    }
+
+    m_terminalChatGeneration = true;
+    m_terminalPendingRequest = message;
+
+    emit toolOutputReceived(
+        QStringLiteral("🖥️ Generating a terminal command proposal locally…"));
+
+    m_terminalAssistant.generateCommand(message);
+    return true;
+}
+
+void Agent::onTerminalProposalReady(const TerminalCommandProposal &proposal)
+{
+    if (!m_terminalChatGeneration) {
+        return; // Proposal originated from the dedicated AI Terminal page.
+    }
+    m_terminalChatGeneration = false;
+
+    const QString request = m_terminalPendingRequest;
+    m_terminalPendingRequest.clear();
+
+    const QString riskName = terminalRiskName(proposal.risk).toUpper();
+    QString summary = QStringLiteral(
+        "🖥️ **Terminal command proposal**\n\n"
+        "`%1`\n\n"
+        "%2\n\n"
+        "**Risk:** %3   **Elevated privileges:** %4\n")
+        .arg(proposal.displayCommand(),
+             proposal.explanation,
+             riskName,
+             proposal.requiresSudo ? QStringLiteral("yes (blocked)")
+                                   : QStringLiteral("no"));
+
+    if (!proposal.workingDirectory.isEmpty()) {
+        summary += QStringLiteral("**Working directory:** `%1`\n")
+                       .arg(proposal.workingDirectory);
+    }
+
+    if (!proposal.executable) {
+        summary += QStringLiteral(
+            "\n⛔ **Blocked:** %1\nYou can copy the command and review it manually.")
+            .arg(proposal.blockReason);
+    } else {
+        if (!proposal.warnings.isEmpty()) {
+            summary += QStringLiteral("\n⚠️ %1\n").arg(proposal.warnings.join(QStringLiteral(" ")));
+        }
+        summary += QStringLiteral(
+            "\nOpen **AI Terminal** in the sidebar to review and approve execution. "
+            "TitanAI will not run it automatically.");
+    }
+
+    emit responseReceived(summary);
+    emit terminalProposalReady(proposal, request);
+}
+
+void Agent::onTerminalGenerationFailed(const QString &error)
+{
+    if (!m_terminalChatGeneration) {
+        return; // Failure belongs to a generation started from the AI Terminal page.
+    }
+    m_terminalChatGeneration = false;
+    m_terminalPendingRequest.clear();
+
+    emit responseReceived(
+        QStringLiteral("❌ **Terminal command generation failed:** %1").arg(error));
 }
 
 bool Agent::handleWebSearchQuery(const QString &message)

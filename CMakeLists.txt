@@ -62,6 +62,12 @@ add_executable(TitanAI
     src/gui/translation_dialog.cpp
     src/meeting/meeting_recorder.cpp
     src/gui/meeting_notes_dialog.cpp
+    src/terminal/terminal_types.cpp
+    src/terminal/command_safety_validator.cpp
+    src/terminal/terminal_executor.cpp
+    src/terminal/terminal_assistant.cpp
+    src/terminal/terminal_history_manager.cpp
+    src/gui/terminal_page.cpp
 )
 
 # Enable compiler warnings
@@ -129,6 +135,11 @@ add_executable(titanai_tests
     src/voice/audio_capture.cpp
     src/voice/speech_recognizer.cpp
     src/meeting/meeting_recorder.cpp
+    src/terminal/terminal_types.cpp
+    src/terminal/command_safety_validator.cpp
+    src/terminal/terminal_executor.cpp
+    src/terminal/terminal_assistant.cpp
+    src/terminal/terminal_history_manager.cpp
 )
 
 target_compile_features(titanai_tests PRIVATE cxx_std_20)

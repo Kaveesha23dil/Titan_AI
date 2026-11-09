@@ -204,6 +204,85 @@ Spoken replies work out of the box with `qt6-speech` (speech-dispatcher) or `esp
 Without Vosk the app still builds and runs; only voice input is disabled.
 
 
+## AI Terminal Assistant
+
+TitanAI includes a secure, local-first **AI Terminal** that turns natural-language
+requests into reviewed Linux commands. It uses the same local Ollama model as the
+chat assistant and runs entirely on your machine.
+
+Open **AI Terminal** from the sidebar (terminal icon), or just ask in chat, for example:
+
+- *"Find the 5 largest files in my Downloads folder."*
+- *"Check how much RAM my computer is using."*
+- *"Find all PDF files in my Documents folder."*
+- *"Show available disk space."*
+- *"Explain this command: `df -h`"*
+
+### How it works
+
+1. **Describe the task** in the AI Terminal input and click **Generate Command**.
+2. TitanAI asks the local model for a structured JSON proposal (executable + arguments,
+   explanation, risk level, privilege requirement, working directory).
+3. The proposal is parsed as JSON and passed through `CommandSafetyValidator`, a
+   deterministic layer that does **not** trust the model's risk label.
+4. TitanAI displays the command, explanation, risk badge, working directory and any
+   warnings.
+5. **Nothing runs automatically.** Click **Execute** and confirm the approval dialog.
+6. Output, errors, exit code and duration appear live. **Stop Execution** terminates a
+   running process.
+7. Click **Explain Output** to have the local model interpret the (sanitized) output.
+8. Every operation is recorded in local history with copy/regenerate actions.
+
+The same flow is available from chat: terminal requests are detected, a preview is shown,
+and the AI Terminal page opens for approval. Chat never executes a command on its own.
+
+### Security model
+
+The initial release is deliberately conservative:
+
+- **Executable allowlist** — only a small set of read-only and low-impact programs
+  (`free`, `df`, `du`, `ls`, `ps`, `find`, `stat`, `mkdir`, `touch`, `cp`, `mv`, `ln`, …)
+  can execute. Unknown programs are blocked.
+- **No shell** — commands use `QProcess` with a program and literal argument list. `sh -c`,
+  `bash -c`, pipes, redirection, command substitution, `;`, `&&`, globs passed to a shell
+  and other compound syntax are rejected.
+- **No privilege escalation** — `sudo`, `su`, `pkexec`, `doas`, package managers and other
+  system-modifying tools are blocked, even if the model labels them safe.
+- **High-risk commands blocked** — deletion, permission changes, system configuration,
+  interpreters, downloaded scripts and similar operations are blocked by default. You can
+  still copy the command and review/run it manually.
+- **Path boundaries** — commands may only access your home directory and temporary
+  directories. Protected paths such as `/etc/shadow`, `/root`, `~/.ssh`, key material and
+  credential-like filenames are rejected. Symlinks are resolved, and dereference flags
+  (`-L`, `-H`, `--dereference`, `find -follow`) are blocked so a link inside your home
+  directory cannot be used to reach protected files.
+- **Output limits and sanitization** — output sent for explanation is length-limited and
+  obvious passwords/tokens/private keys are redacted. Output is explicitly wrapped as
+  untrusted data so the model does not follow instructions embedded inside it.
+- **No auto-execution** — generation, preview and explanation never start a process.
+
+Because a safe single command cannot express every workflow (for example a real shell
+pipeline for sorting the largest files), TitanAI prefers limited, reviewable functionality
+over unrestricted shell access. Use **Copy Command** if you need to run something manually.
+
+### Local history
+
+Command metadata (original request, command, explanation, risk, timestamp, status, exit
+code, duration) is stored locally under the application data directory
+(`~/.local/share/TitanAI/TitanAI/terminal/history.json` by default). Terminal output is
+**not** stored. Use the **Clear** button in the AI Terminal history panel to delete it.
+
+### Tests
+
+The automated suite covers proposal parsing, invalid model JSON, allowlisting, risk
+classification, injection/substitution attempts, privilege escalation, path boundaries,
+approval enforcement, cancellation, timeouts, output capture, history persistence and
+untrusted-output sanitization:
+
+```bash
+./build/titanai_tests
+```
+
 ## Building the Project
 
 ### Prerequisites
