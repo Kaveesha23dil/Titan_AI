@@ -63,6 +63,28 @@ Agent::Agent(QObject *parent)
             this, &Agent::onTerminalGenerationFailed);
     m_terminalAssistant.setModel(m_ollamaClient.model());
 
+    // Desktop Automation
+    connect(&m_automationPlanner, &AutomationPlanner::planReady,
+            this, &Agent::onAutomationPlanReady);
+    connect(&m_automationPlanner, &AutomationPlanner::planningFailed,
+            this, &Agent::onAutomationPlanFailed);
+    connect(&m_automationExecutor, &AutomationExecutor::workflowStarted,
+            this, [this](const QString &workflowId, const AutomationPlan &plan) {
+                AutomationHistoryEntry entry;
+                entry.workflowId = workflowId;
+                entry.request = plan.request;
+                entry.taskName = plan.taskName;
+                entry.plan = plan;
+                entry.status = AutomationWorkflowStatus::Running;
+                entry.startedAt = QDateTime::currentDateTime();
+                m_automationHistoryManager.addEntry(entry);
+            });
+    connect(&m_automationExecutor, &AutomationExecutor::workflowFinished,
+            this, [this](const AutomationWorkflowResult &result) {
+                m_automationHistoryManager.updateEntry(result);
+            });
+    m_automationPlanner.setModel(m_ollamaClient.model());
+
     // Local RAG: surface background indexing results in the chat.
     connect(&m_ragManager, &RagManager::indexingFinished, this,
             [this](int filesIndexed, int chunksIndexed) {
@@ -86,6 +108,7 @@ void Agent::onModelReady(const QString &model)
 {
     m_ollamaClient.setModel(model);
     m_terminalAssistant.setModel(model);
+    m_automationPlanner.setModel(model);
     m_ollamaClient.warmUp();
     emit modelReady(model);
 }
@@ -96,6 +119,10 @@ void Agent::sendMessage(const QString &message)
     m_chatHistoryManager.appendMessage(QStringLiteral("user"), message);
 
     if (handleChatHistoryQuery(message)) {
+        return;
+    }
+
+    if (handleAutomationQuery(message)) {
         return;
     }
 
@@ -212,6 +239,7 @@ void Agent::setModel(const QString &model)
 {
     m_ollamaClient.setModel(model);
     m_terminalAssistant.setModel(model);
+    m_automationPlanner.setModel(model);
 }
 
 void Agent::switchModel(const QString &model)
@@ -227,6 +255,7 @@ void Agent::switchModel(const QString &model)
     // so a prior conversation with the old model isn't sent to the new one.
     m_ollamaClient.setModel(model);
     m_terminalAssistant.setModel(model);
+    m_automationPlanner.setModel(model);
     m_ollamaClient.clearHistory();
 
     // Ask the OllamaManager to verify the model is installed and warm it up in
@@ -282,6 +311,8 @@ bool Agent::autoFixEnabled() const
 void Agent::setProjectDirectory(const QString &directory)
 {
     m_projectDirectory = directory.trimmed();
+    m_automationPlanner.setProjectDirectory(m_projectDirectory);
+    m_automationExecutor.setProjectDirectory(m_projectDirectory);
 }
 
 void Agent::setBuildCommand(const QString &command)
@@ -1079,6 +1110,21 @@ TerminalExecutor &Agent::terminalExecutor()
 TerminalHistoryManager &Agent::terminalHistoryManager()
 {
     return m_terminalHistoryManager;
+}
+
+AutomationPlanner &Agent::automationPlanner()
+{
+    return m_automationPlanner;
+}
+
+AutomationExecutor &Agent::automationExecutor()
+{
+    return m_automationExecutor;
+}
+
+AutomationHistoryManager &Agent::automationHistoryManager()
+{
+    return m_automationHistoryManager;
 }
 
 RagManager &Agent::ragManager()
@@ -1916,6 +1962,70 @@ bool Agent::handleTranslationQuery(const QString &message)
 
     m_translationAssistant.translate(req);
     return true;
+}
+
+bool Agent::handleAutomationQuery(const QString &message)
+{
+    if (!AutomationPlanner::isAutomationRequest(message)) {
+        return false;
+    }
+
+    if (m_automationPlanner.isBusy()) {
+        emit responseReceived(QStringLiteral(
+            "TitanAI is already preparing a desktop automation plan. Please wait."));
+        return true;
+    }
+    if (m_automationExecutor.isRunning()) {
+        emit responseReceived(QStringLiteral(
+            "A desktop automation plan is currently running. Stop it in the "
+            "Desktop Automation page before starting another one."));
+        return true;
+    }
+
+    const DesktopEnvironmentInfo environment = DesktopEnvironmentDetector::detect();
+    m_automationPlanner.setEnvironment(environment);
+    m_automationPlanner.setProjectDirectory(m_projectDirectory);
+
+    emit toolOutputReceived(
+        QStringLiteral("🖥️ Preparing a desktop automation plan locally…"));
+    m_automationPlanner.generatePlan(message);
+    return true;
+}
+
+void Agent::onAutomationPlanReady(const AutomationPlan &plan)
+{
+    QString summary = QStringLiteral("🖥️ **Desktop automation plan ready**\n\n"
+                                     "**%1**\n")
+                          .arg(plan.taskName);
+    int index = 1;
+    for (const AutomationAction &action : plan.actions) {
+        summary += QStringLiteral("%1. %2 — `%3`%4\n")
+                       .arg(index++)
+                       .arg(action.description.isEmpty()
+                                ? automationActionTypeName(action.type)
+                                : action.description,
+                            automationActionTypeName(action.type),
+                            action.supported
+                                ? QString()
+                                : QStringLiteral(" (unsupported)"));
+    }
+    if (!plan.warnings.isEmpty()) {
+        summary += QStringLiteral("\n⚠️ %1\n")
+                       .arg(plan.warnings.join(QStringLiteral(" ")));
+    }
+    summary += QStringLiteral(
+        "\nOpen **Desktop Automation** in the sidebar to review and approve. "
+        "Nothing will run until you explicitly approve the plan.");
+
+    emit responseReceived(summary);
+    emit automationPlanReady(plan, plan.request);
+}
+
+void Agent::onAutomationPlanFailed(const QString &error)
+{
+    emit automationPlanFailed(error);
+    emit responseReceived(
+        QStringLiteral("❌ **Desktop automation plan failed:** %1").arg(error));
 }
 
 bool Agent::handleTerminalQuery(const QString &message)

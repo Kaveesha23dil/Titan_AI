@@ -19,7 +19,8 @@ const QStringList kLowRisk = {
     QStringLiteral("find"),     QStringLiteral("stat"),
     QStringLiteral("wc"),       QStringLiteral("pwd"),
     QStringLiteral("echo"),     QStringLiteral("which"),
-    QStringLiteral("whereis"),  QStringLiteral("sleep")
+    QStringLiteral("whereis"),  QStringLiteral("sleep"),
+    QStringLiteral("git")
 };
 
 const QStringList kMediumRisk = {
@@ -72,7 +73,7 @@ const QStringList kHighRisk = {
     QStringLiteral("source"),     QStringLiteral("exec"),
     QStringLiteral("command"),    QStringLiteral("busybox"),
     QStringLiteral("curl"),       QStringLiteral("wget"),
-    QStringLiteral("git"),        QStringLiteral("make"),
+    QStringLiteral("make"),
     QStringLiteral("cmake"),      QStringLiteral("ninja"),
     QStringLiteral("cat"),        QStringLiteral("tail"),
     QStringLiteral("head"),       QStringLiteral("less"),
@@ -143,7 +144,8 @@ bool commandUsesRelativePaths(const QString &command)
         QStringLiteral("ln"),    QStringLiteral("mkdir"),
         QStringLiteral("touch"), QStringLiteral("ls"),
         QStringLiteral("stat"),  QStringLiteral("wc"),
-        QStringLiteral("du")
+        QStringLiteral("du"),
+        QStringLiteral("git")
     };
     return kPathCommands.contains(command);
 }
@@ -319,6 +321,90 @@ bool CommandSafetyValidator::commandDisallowsArguments(const QString &command,
                 if (reason) {
                     *reason = QStringLiteral("Following symbolic links is not allowed (%1).")
                                   .arg(arg);
+                }
+                return true;
+            }
+        }
+    }
+
+    if (command == QLatin1String("git")) {
+        static const QStringList kAllowedGitSubcommands = {
+            QStringLiteral("status"), QStringLiteral("log"), QStringLiteral("diff"),
+            QStringLiteral("branch"), QStringLiteral("show"), QStringLiteral("rev-parse")
+        };
+        static const QStringList kBlockedGitOptions = {
+            QStringLiteral("-C"), QStringLiteral("-c"), QStringLiteral("--git-dir"),
+            QStringLiteral("--work-tree"), QStringLiteral("--exec-path"),
+            QStringLiteral("--ext-diff"), QStringLiteral("--no-index"),
+            QStringLiteral("--output"), QStringLiteral("--config-env"),
+            QStringLiteral("--config"), QStringLiteral("--super-prefix"),
+            QStringLiteral("--namespace"), QStringLiteral("--bare"),
+            QStringLiteral("--upload-pack"), QStringLiteral("--receive-pack"),
+            QStringLiteral("--exec"), QStringLiteral("--open-files-in-pager")
+        };
+        static const QStringList kBlockedBranchFlags = {
+            QStringLiteral("-d"), QStringLiteral("-D"), QStringLiteral("--delete"),
+            QStringLiteral("-m"), QStringLiteral("-M"), QStringLiteral("--move"),
+            QStringLiteral("-C"), QStringLiteral("--copy"), QStringLiteral("--set-upstream-to"),
+            QStringLiteral("--unset-upstream"), QStringLiteral("-f"), QStringLiteral("--force"),
+            QStringLiteral("-u"), QStringLiteral("--track"), QStringLiteral("--edit-description")
+        };
+        static const QStringList kProtectedGitNames = {
+            QStringLiteral(".env"), QStringLiteral(".pem"), QStringLiteral(".key"),
+            QStringLiteral("id_rsa"), QStringLiteral("id_ed25519"),
+            QStringLiteral("id_ecdsa"), QStringLiteral("credential"),
+            QStringLiteral("secret"), QStringLiteral("token"), QStringLiteral("password")
+        };
+
+        if (arguments.isEmpty()) {
+            if (reason) *reason = QStringLiteral("Git requires a read-only subcommand.");
+            return true;
+        }
+        const QString subcommand = arguments.first();
+        if (subcommand.startsWith(QLatin1Char('-'))) {
+            if (reason) *reason = QStringLiteral("Global git options are not allowed.");
+            return true;
+        }
+        if (!kAllowedGitSubcommands.contains(subcommand)) {
+            if (reason) {
+                *reason = QStringLiteral("Only read-only git subcommands are allowed "
+                                         "(status, log, diff, branch, show, rev-parse).");
+            }
+            return true;
+        }
+
+        bool branchListing = subcommand == QLatin1String("branch");
+        for (int i = 1; i < arguments.size(); ++i) {
+            const QString arg = arguments.at(i);
+            const QString lower = arg.toLower();
+            for (const QString &blocked : kBlockedGitOptions) {
+                if (lower == blocked
+                    || lower.startsWith(blocked + QLatin1Char('='))) {
+                    if (reason) {
+                        *reason = QStringLiteral("Git option '%1' is not allowed.").arg(arg);
+                    }
+                    return true;
+                }
+            }
+            for (const QString &name : kProtectedGitNames) {
+                if (lower.contains(name)) {
+                    if (reason) {
+                        *reason = QStringLiteral("Git arguments must not reference "
+                                                 "protected data (%1).").arg(name);
+                    }
+                    return true;
+                }
+            }
+            if (subcommand == QLatin1String("branch")
+                && (kBlockedBranchFlags.contains(arg))) {
+                if (reason) {
+                    *reason = QStringLiteral("Destructive git branch options are not allowed.");
+                }
+                return true;
+            }
+            if (branchListing && !arg.startsWith(QLatin1Char('-'))) {
+                if (reason) {
+                    *reason = QStringLiteral("Creating or renaming branches is not allowed.");
                 }
                 return true;
             }

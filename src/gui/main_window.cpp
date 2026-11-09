@@ -1,6 +1,7 @@
 #include "gui/main_window.hpp"
 
 #include "gui/terminal_page.hpp"
+#include "gui/desktop_automation_page.hpp"
 #include "gui/camera_dialog.hpp"
 #include "gui/model_dialog.hpp"
 #include "gui/voice_settings_dialog.hpp"
@@ -215,6 +216,14 @@ QIcon MainWindow::createVectorIcon(const QString &name, int size)
         p.drawLine(QPointF(s * 0.30, s * 0.38), QPointF(s * 0.44, s * 0.50));
         p.drawLine(QPointF(s * 0.44, s * 0.50), QPointF(s * 0.30, s * 0.62));
         p.drawLine(QPointF(s * 0.52, s * 0.64), QPointF(s * 0.72, s * 0.64));
+    } else if (name == QLatin1String("automation")) {
+        // Window layout: two tiled panes and a control bar
+        QRectF frame(m, m, s - 2 * m, s - 2 * m);
+        p.drawRoundedRect(frame, 3, 3);
+        p.drawLine(QPointF(m, s * 0.30), QPointF(s - m, s * 0.30));
+        p.drawLine(QPointF(s * 0.52, s * 0.30), QPointF(s * 0.52, s - m));
+        p.drawLine(QPointF(s * 0.62, s * 0.20), QPointF(s * 0.70, s * 0.20));
+        p.drawLine(QPointF(s * 0.78, s * 0.20), QPointF(s * 0.84, s * 0.20));
     } else if (name == QLatin1String("history")) {
         // Clock / history icon: circle with clock hands
         QRectF circle(m, m, s - 2 * m, s - 2 * m);
@@ -439,6 +448,7 @@ QWidget *MainWindow::createSidebar()
     m_navMeeting = makeNavBtn(QStringLiteral("meeting"),   QStringLiteral("Meeting Notes – Record & Summarize (Ctrl+M)"));
     m_navKnowledge = makeNavBtn(QStringLiteral("knowledge"), QStringLiteral("Local Knowledge Base (RAG)"));
     m_navTerminal = makeNavBtn(QStringLiteral("terminal"), QStringLiteral("AI Terminal – Natural Language Linux Commands"));
+    m_navAutomation = makeNavBtn(QStringLiteral("automation"), QStringLiteral("Desktop Automation – AI Window & App Control"));
 
     m_navHome->setChecked(true);
 
@@ -461,7 +471,8 @@ QWidget *MainWindow::createSidebar()
     connect(m_navMeeting, &QPushButton::clicked, this, &MainWindow::onOpenMeetingNotes);
     connect(m_navKnowledge, &QPushButton::clicked, this, &MainWindow::onOpenKnowledgeBase);
     connect(m_navTerminal, &QPushButton::clicked, this, [this]() { navigateTo(3); });
-    connect(m_navSettings, &QPushButton::clicked, this, [this]() { navigateTo(4); });
+    connect(m_navAutomation, &QPushButton::clicked, this, [this]() { navigateTo(4); });
+    connect(m_navSettings, &QPushButton::clicked, this, [this]() { navigateTo(5); });
 
     return sidebar;
 }
@@ -1711,7 +1722,8 @@ void MainWindow::navigateTo(int pageIndex)
     }
 
     // Uncheck old nav button
-    QList<QPushButton *> navBtns = {m_navHome, m_navChat, m_navDev, m_navTerminal};
+    QList<QPushButton *> navBtns = {m_navHome, m_navChat, m_navDev, m_navTerminal,
+                                    m_navAutomation};
     for (int i = 0; i < navBtns.size(); ++i) {
         const QSignalBlocker blocker(navBtns[i]);
         navBtns[i]->setChecked(i == pageIndex);
@@ -1782,7 +1794,12 @@ MainWindow::MainWindow(QWidget *parent)
                                       &m_agent.terminalHistoryManager(),
                                       this);
     m_pageStack->addWidget(m_terminalPage);         // 3
-    m_pageStack->addWidget(createSettingsPage());   // 4
+    m_automationPage = new DesktopAutomationPage(&m_agent.automationPlanner(),
+                                                 &m_agent.automationExecutor(),
+                                                 &m_agent.automationHistoryManager(),
+                                                 this);
+    m_pageStack->addWidget(m_automationPage);       // 4
+    m_pageStack->addWidget(createSettingsPage());   // 5
     mainHLayout->addWidget(m_pageStack, 1);
 
     setCentralWidget(central);
@@ -1820,6 +1837,19 @@ MainWindow::MainWindow(QWidget *parent)
                 if (m_terminalPage) {
                     m_terminalPage->setPendingProposal(proposal, request);
                     navigateTo(3);
+                }
+            });
+    connect(&m_agent, &Agent::automationPlanReady, this,
+            [this](const AutomationPlan &plan, const QString &) {
+                if (m_automationPage) {
+                    m_automationPage->setPlan(plan);
+                    navigateTo(4);
+                }
+            });
+    connect(&m_agent, &Agent::automationPlanFailed, this,
+            [this](const QString &error) {
+                if (m_automationPage) {
+                    m_automationPage->showPlanningError(error);
                 }
             });
 
