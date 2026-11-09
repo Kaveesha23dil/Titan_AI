@@ -27,6 +27,10 @@
 #include "terminal/terminal_assistant.hpp"
 #include "terminal/terminal_executor.hpp"
 #include "terminal/terminal_history_manager.hpp"
+#include "automation/automation_types.hpp"
+#include "automation/automation_planner.hpp"
+#include "automation/automation_executor.hpp"
+#include "automation/automation_history_manager.hpp"
 
 class Agent : public QObject {
     Q_OBJECT
@@ -77,6 +81,11 @@ public:
     [[nodiscard]] TerminalAssistant &terminalAssistant();
     [[nodiscard]] TerminalExecutor &terminalExecutor();
     [[nodiscard]] TerminalHistoryManager &terminalHistoryManager();
+
+    // Desktop Automation
+    [[nodiscard]] AutomationPlanner &automationPlanner();
+    [[nodiscard]] AutomationExecutor &automationExecutor();
+    [[nodiscard]] AutomationHistoryManager &automationHistoryManager();
 
     // Local Retrieval-Augmented Generation
     [[nodiscard]] RagManager &ragManager();
@@ -143,6 +152,10 @@ signals:
     void terminalProposalReady(const TerminalCommandProposal &proposal,
                                const QString &request);
 
+    // Desktop Automation signals
+    void automationPlanReady(const AutomationPlan &plan, const QString &request);
+    void automationPlanFailed(const QString &error);
+
     // Local RAG signals
     void ragContextUsed(const QStringList &sources);
 
@@ -156,6 +169,8 @@ private slots:
     void onWebSearchError(const QString &error);
     void onTerminalProposalReady(const TerminalCommandProposal &proposal);
     void onTerminalGenerationFailed(const QString &error);
+    void onAutomationPlanReady(const AutomationPlan &plan);
+    void onAutomationPlanFailed(const QString &error);
 
 private:
     bool handleWebSearchQuery(const QString &message);
@@ -173,6 +188,7 @@ private:
     bool handleChatHistoryQuery(const QString &message);
     bool handleTranslationQuery(const QString &message);
     bool handleTerminalQuery(const QString &message);
+    bool handleAutomationQuery(const QString &message);
     bool handleRagQuery(const QString &message);
     void startRagGroundedAnswer(const QString &message, const QString &query);
     void startPasteFix(const QString &message);
@@ -207,6 +223,9 @@ private:
     TerminalAssistant m_terminalAssistant;
     TerminalExecutor m_terminalExecutor;
     TerminalHistoryManager m_terminalHistoryManager;
+    AutomationPlanner m_automationPlanner;
+    AutomationExecutor m_automationExecutor;
+    AutomationHistoryManager m_automationHistoryManager;
     RagManager m_ragManager;
     bool m_terminalChatGeneration{false};
     QString m_terminalPendingRequest;

@@ -27,6 +27,7 @@ class QTextBrowser;
 class QVBoxLayout;
 class QWidget;
 class TerminalPage;
+class DesktopAutomationPage;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -177,6 +178,9 @@ private:
     // --- AI Terminal ---
     QPushButton *m_navTerminal{nullptr}; ///< Sidebar AI Terminal button
     TerminalPage *m_terminalPage{nullptr}; ///< Dedicated terminal assistant page
+    // --- Desktop Automation ---
+    QPushButton *m_navAutomation{nullptr}; ///< Sidebar desktop automation button
+    DesktopAutomationPage *m_automationPage{nullptr}; ///< Desktop automation page
     // --- Translation ---
     QPushButton   *m_navTranslate{nullptr}; ///< Sidebar translation button (🌐)
     // --- Meeting Notes ---

@@ -3,6 +3,7 @@
 #include <QEventLoop>
 #include <QTimer>
 #include <QFile>
+#include <QHash>
 #include <QTemporaryDir>
 #include <QSignalSpy>
 #include <QTest>
@@ -31,6 +32,186 @@
 #include "terminal/terminal_assistant.hpp"
 #include "terminal/terminal_executor.hpp"
 #include "terminal/terminal_history_manager.hpp"
+#include "automation/automation_types.hpp"
+#include "automation/automation_policy.hpp"
+#include "automation/application_launcher.hpp"
+#include "automation/desktop_environment_detector.hpp"
+#include "automation/window_manager.hpp"
+#include "automation/automation_planner.hpp"
+#include "automation/automation_executor.hpp"
+#include "automation/automation_history_manager.hpp"
+
+
+namespace {
+
+class MockApplicationLauncher : public ApplicationLauncher {
+public:
+    QHash<QString, ApplicationInfo> available;
+    QStringList launched;
+    QStringList openedDirectories;
+    QStringList openedFiles;
+
+    ApplicationInfo resolve(const QString &name, QString *error = nullptr) const override
+    {
+        for (auto it = available.cbegin(); it != available.cend(); ++it) {
+            if (it.key().compare(name, Qt::CaseInsensitive) == 0
+                || it.value().id.compare(name, Qt::CaseInsensitive) == 0
+                || it.value().name.compare(name, Qt::CaseInsensitive) == 0) {
+                return it.value();
+            }
+        }
+        if (error) {
+            *error = QStringLiteral("Application '%1' is not installed.").arg(name);
+        }
+        return {};
+    }
+
+    bool isInstalled(const QString &name) const override
+    {
+        return !resolve(name).id.isEmpty();
+    }
+
+    bool launch(const ApplicationInfo &application, const QStringList &,
+                const QString &, QString *error = nullptr) override
+    {
+        if (application.id.isEmpty()) {
+            if (error) *error = QStringLiteral("Invalid application.");
+            return false;
+        }
+        launched.append(application.name.isEmpty() ? application.id : application.name);
+        return true;
+    }
+
+    bool openDirectory(const QString &path, QString *error = nullptr) override
+    {
+        openedDirectories.append(path);
+        if (error) error->clear();
+        return true;
+    }
+
+    bool openFile(const QString &path, QString *error = nullptr) override
+    {
+        openedFiles.append(path);
+        if (error) error->clear();
+        return true;
+    }
+};
+
+class MockWindowManager : public IWindowManager {
+public:
+    QList<WindowInfo> windows;
+    QRect screen{0, 0, 1920, 1080};
+    QString lastFocusedId;
+    QRect lastMove;
+    QSize lastResize;
+    bool focused{false};
+    bool moved{false};
+    bool resized{false};
+
+    QString backendName() const override { return QStringLiteral("mock"); }
+    bool isSupported() const override { return true; }
+    QString unsupportedReason() const override { return {}; }
+
+    QList<WindowInfo> listWindows(QString *error = nullptr) override
+    {
+        if (error) error->clear();
+        return windows;
+    }
+
+    WindowInfo activeWindow(QString *error = nullptr) override
+    {
+        if (error) error->clear();
+        for (const WindowInfo &window : windows) {
+            if (window.active) return window;
+        }
+        return windows.isEmpty() ? WindowInfo{} : windows.first();
+    }
+
+    bool focusWindow(const QString &windowId, QString *error = nullptr) override
+    {
+        lastFocusedId = windowId;
+        focused = true;
+        if (error) error->clear();
+        for (WindowInfo &window : windows) {
+            window.active = window.id == windowId;
+        }
+        return true;
+    }
+
+    bool moveWindow(const QString &windowId, const QRect &geometry,
+                    QString *error = nullptr) override
+    {
+        lastMove = geometry;
+        moved = true;
+        if (error) error->clear();
+        for (WindowInfo &window : windows) {
+            if (window.id == windowId) window.geometry = geometry;
+        }
+        return true;
+    }
+
+    bool resizeWindow(const QString &windowId, const QSize &size,
+                      QString *error = nullptr) override
+    {
+        lastResize = size;
+        resized = true;
+        if (error) error->clear();
+        for (WindowInfo &window : windows) {
+            if (window.id == windowId) window.geometry.setSize(size);
+        }
+        return true;
+    }
+
+    QRect screenGeometry() const override { return screen; }
+};
+
+AutomationPlan makeAutomationPlan(const QString &id,
+                                  QList<AutomationAction> actions,
+                                  const QString &taskName = QStringLiteral("Test task"))
+{
+    AutomationPlan plan;
+    plan.id = id;
+    plan.taskName = taskName;
+    plan.request = taskName;
+    plan.requiresApproval = true;
+    plan.actions = std::move(actions);
+    plan.createdAt = QDateTime::currentDateTime();
+    plan.fingerprint = plan.computeFingerprint();
+    return plan;
+}
+
+AutomationAction makeAutomationAction(const QString &id, AutomationActionType type)
+{
+    AutomationAction action;
+    action.id = id;
+    action.type = type;
+    action.description = automationActionTypeName(type);
+    return action;
+}
+
+ApplicationInfo makeApp(const QString &id, const QString &name)
+{
+    ApplicationInfo info;
+    info.id = id;
+    info.name = name;
+    info.executable = QStringLiteral("/usr/bin/") + id;
+    info.fromDesktopEntry = true;
+    return info;
+}
+
+WindowInfo makeWindow(const QString &id, const QString &appClass,
+                      const QString &title = QStringLiteral("Window"))
+{
+    WindowInfo window;
+    window.id = id;
+    window.appClass = appClass;
+    window.appName = appClass;
+    window.title = title;
+    window.geometry = QRect(10, 10, 800, 600);
+    return window;
+}
+
+} // namespace
 
 class TitanAiTestSuite : public QObject {
     Q_OBJECT
@@ -1297,6 +1478,562 @@ private slots:
         reloaded.clear();
         QCOMPARE(reloaded.count(), 0);
         std::cout << "[PASS] Terminal history persistence, update and clear" << std::endl;
+    }
+
+
+    void testAutomationPlanJsonAndFingerprint()
+    {
+        AutomationAction action = makeAutomationAction(QStringLiteral("action_1"),
+                                                       AutomationActionType::MoveWindow);
+        action.application = QStringLiteral("code");
+        action.placement = QStringLiteral("right");
+        action.hasX = true;
+        action.hasY = true;
+        action.hasWidth = true;
+        action.hasHeight = true;
+        action.x = 960;
+        action.y = 0;
+        action.width = 960;
+        action.height = 1080;
+
+        AutomationPlan plan = makeAutomationPlan(QStringLiteral("plan-1"), {action});
+        const QString fingerprint = plan.fingerprint;
+        QVERIFY(!fingerprint.isEmpty());
+        QCOMPARE(fingerprint.size(), 64);
+
+        const AutomationPlan restored = AutomationPlan::fromJson(plan.toJson());
+        QCOMPARE(restored.id, plan.id);
+        QCOMPARE(restored.actions.size(), 1);
+        QCOMPARE(restored.actions.first().placement, QStringLiteral("right"));
+        QCOMPARE(restored.computeFingerprint(), fingerprint);
+
+        AutomationAction changed = action;
+        changed.placement = QStringLiteral("left");
+        AutomationPlan changedPlan = makeAutomationPlan(QStringLiteral("plan-1"), {changed});
+        QVERIFY(changedPlan.fingerprint != fingerprint);
+        std::cout << "[PASS] Automation plan JSON round-trip and fingerprint binding" << std::endl;
+    }
+
+    void testAutomationPolicyRejectsInvalidPlans()
+    {
+        QTemporaryDir tempDir;
+        QVERIFY(tempDir.isValid());
+        const AutomationPolicyContext context = AutomationPolicy::contextFor(tempDir.path());
+
+        AutomationPlan empty = makeAutomationPlan(QStringLiteral("plan-empty"), {});
+        QVERIFY(!AutomationPolicy::validatePlan(empty, context).allowed);
+
+        AutomationAction unknown = makeAutomationAction(QStringLiteral("action_1"),
+                                                        AutomationActionType::Unknown);
+        AutomationPlan unknownPlan = makeAutomationPlan(QStringLiteral("plan-unknown"), {unknown});
+        QVERIFY(!AutomationPolicy::validatePlan(unknownPlan, context).allowed);
+
+        AutomationAction launch = makeAutomationAction(QStringLiteral("action_1"),
+                                                       AutomationActionType::LaunchApplication);
+        launch.application = QStringLiteral("code");
+        AutomationPlan noApproval = makeAutomationPlan(QStringLiteral("plan-noapproval"), {launch});
+        noApproval.requiresApproval = false;
+        noApproval.fingerprint = noApproval.computeFingerprint();
+        QVERIFY(!AutomationPolicy::validatePlan(noApproval, context).allowed);
+
+        AutomationPlan valid = makeAutomationPlan(QStringLiteral("plan-valid"), {launch});
+        QVERIFY(AutomationPolicy::validatePlan(valid, context).allowed);
+        std::cout << "[PASS] Automation policy rejects empty, unknown and unapproved plans" << std::endl;
+    }
+
+    void testAutomationPolicyPathRestrictions()
+    {
+        QTemporaryDir tempDir;
+        QVERIFY(tempDir.isValid());
+        const QString safeFile = tempDir.filePath(QStringLiteral("notes.txt"));
+        {
+            QFile file(safeFile);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            file.write("hello");
+        }
+        const AutomationPolicyContext context = AutomationPolicy::contextFor(tempDir.path());
+
+        AutomationAction safe = makeAutomationAction(QStringLiteral("action_1"),
+                                                     AutomationActionType::OpenFile);
+        safe.path = safeFile;
+        AutomationPlan safePlan = makeAutomationPlan(QStringLiteral("plan-safe"), {safe});
+        QVERIFY(AutomationPolicy::validatePlan(safePlan, context).allowed);
+
+        AutomationAction outside = makeAutomationAction(QStringLiteral("action_1"),
+                                                        AutomationActionType::OpenFile);
+        outside.path = QStringLiteral("/etc/passwd");
+        AutomationPlan outsidePlan = makeAutomationPlan(QStringLiteral("plan-outside"),
+                                                        {outside});
+        QVERIFY(!AutomationPolicy::validatePlan(outsidePlan, context).allowed);
+
+        AutomationAction protectedPath = makeAutomationAction(
+            QStringLiteral("action_1"), AutomationActionType::OpenFile);
+        protectedPath.path = QStringLiteral("~/.ssh/id_rsa");
+        AutomationPlan protectedPlan = makeAutomationPlan(QStringLiteral("plan-protected"),
+                                                          {protectedPath});
+        QVERIFY(!AutomationPolicy::validatePlan(protectedPlan, context).allowed);
+
+        AutomationAction traversal = makeAutomationAction(QStringLiteral("action_1"),
+                                                          AutomationActionType::OpenDirectory);
+        traversal.path = QStringLiteral("../../../../etc");
+        AutomationPlan traversalPlan = makeAutomationPlan(QStringLiteral("plan-traversal"),
+                                                          {traversal});
+        QVERIFY(!AutomationPolicy::validatePlan(traversalPlan, context).allowed);
+        std::cout << "[PASS] Automation path allowlist, traversal and protected-path rejection"
+                  << std::endl;
+    }
+
+    void testAutomationPolicyTerminalGitSafety()
+    {
+        QTemporaryDir tempDir;
+        QVERIFY(tempDir.isValid());
+        const AutomationPolicyContext context = AutomationPolicy::contextFor(tempDir.path());
+
+        auto terminalAction = [](const QString &command, const QStringList &args) {
+            AutomationAction action = makeAutomationAction(
+                QStringLiteral("action_1"),
+                AutomationActionType::RunApprovedTerminalCommand);
+            action.command = command;
+            action.arguments = args;
+            return action;
+        };
+
+        AutomationAction status = terminalAction(QStringLiteral("git"),
+                                                 {QStringLiteral("status")});
+        AutomationPlan statusPlan = makeAutomationPlan(QStringLiteral("plan-git-status"),
+                                                       {status});
+        QVERIFY2(AutomationPolicy::validatePlan(statusPlan, context).allowed,
+                 qPrintable(AutomationPolicy::validatePlan(statusPlan, context).reason));
+
+        AutomationAction destructive = terminalAction(
+            QStringLiteral("git"),
+            {QStringLiteral("branch"), QStringLiteral("-D"), QStringLiteral("main")});
+        AutomationPlan destructivePlan = makeAutomationPlan(QStringLiteral("plan-git-delete"),
+                                                            {destructive});
+        QVERIFY(!AutomationPolicy::validatePlan(destructivePlan, context).allowed);
+
+        AutomationAction gitDir = terminalAction(
+            QStringLiteral("git"),
+            {QStringLiteral("-C"), tempDir.path(), QStringLiteral("status")});
+        AutomationPlan gitDirPlan = makeAutomationPlan(QStringLiteral("plan-git-dir"),
+                                                       {gitDir});
+        QVERIFY(!AutomationPolicy::validatePlan(gitDirPlan, context).allowed);
+
+        AutomationAction secret = terminalAction(
+            QStringLiteral("git"),
+            {QStringLiteral("show"), QStringLiteral("HEAD:.env")});
+        AutomationPlan secretPlan = makeAutomationPlan(QStringLiteral("plan-git-secret"),
+                                                       {secret});
+        QVERIFY(!AutomationPolicy::validatePlan(secretPlan, context).allowed);
+
+        AutomationAction shell = terminalAction(QStringLiteral("rm"),
+                                                {QStringLiteral("-rf"), tempDir.path()});
+        AutomationPlan shellPlan = makeAutomationPlan(QStringLiteral("plan-rm"), {shell});
+        QVERIFY(!AutomationPolicy::validatePlan(shellPlan, context).allowed);
+        std::cout << "[PASS] Automation terminal policy allows read-only git and blocks unsafe git"
+                  << std::endl;
+    }
+
+    void testAutomationPlannerParsesValidPlan()
+    {
+        const QString response = QStringLiteral(
+            "```json\n"
+            "{\"task_name\":\"Open editor and tile\",\"warnings\":[\"test\"],"
+            "\"actions\":["
+            "{\"id\":\"\",\"type\":\"launch_application\",\"application\":\"code\","
+            "\"description\":\"Launch the editor\"},"
+            "{\"id\":\"action_1\",\"type\":\"move_window\",\"application\":\"code\","
+            "\"placement\":\"right\",\"description\":\"Move to the right\"}"
+            "]}\n```");
+        AutomationPlan plan;
+        QString error;
+        QVERIFY2(AutomationPlanner::parsePlan(response, QStringLiteral("Open code on the right"),
+                                              &plan, &error),
+                 qPrintable(error));
+        QCOMPARE(plan.taskName, QStringLiteral("Open editor and tile"));
+        QCOMPARE(plan.actions.size(), 2);
+        QVERIFY(plan.requiresApproval);
+        QVERIFY(!plan.actions[0].id.isEmpty());
+        QVERIFY(plan.actions[0].id != plan.actions[1].id);
+        QCOMPARE(plan.actions[1].placement, QStringLiteral("right"));
+        QVERIFY(plan.warnings.contains(QStringLiteral("test")));
+        std::cout << "[PASS] Automation planner parses and normalizes JSON plans" << std::endl;
+    }
+
+    void testAutomationPlannerRejectsMalformedPlans()
+    {
+        AutomationPlan plan;
+        QString error;
+        QVERIFY(!AutomationPlanner::parsePlan(QStringLiteral("not json"), QStringLiteral("x"),
+                                              &plan, &error));
+        QVERIFY(!error.isEmpty());
+
+        QVERIFY(!AutomationPlanner::parsePlan("{\"actions\":[]}", QStringLiteral("x"),
+                                              &plan, &error));
+        QVERIFY(!AutomationPlanner::parsePlan(
+            "{\"actions\":[{\"type\":\"delete_everything\"}]}", QStringLiteral("x"),
+            &plan, &error));
+        QVERIFY(error.contains(QStringLiteral("Unsupported action type")));
+        std::cout << "[PASS] Automation planner rejects malformed and unknown actions" << std::endl;
+    }
+
+    void testAutomationIntentDetection()
+    {
+        QVERIFY(AutomationPlanner::isAutomationRequest(
+            QStringLiteral("Open code on the left and firefox on the right")));
+        QVERIFY(AutomationPlanner::isAutomationRequest(
+            QStringLiteral("Arrange the windows side by side")));
+        QVERIFY(AutomationPlanner::isAutomationRequest(
+            QStringLiteral("What windows are currently open?")));
+        QVERIFY(AutomationPlanner::isAutomationRequest(
+            QStringLiteral("Focus the browser window")));
+        QVERIFY(!AutomationPlanner::isAutomationRequest(
+            QStringLiteral("How do I open a terminal?")));
+        QVERIFY(!AutomationPlanner::isAutomationRequest(
+            QStringLiteral("Explain desktop automation")));
+        QVERIFY(!TerminalAssistant::isTerminalRequest(
+            QStringLiteral("Open my project folder")));
+        std::cout << "[PASS] Desktop automation intent detection avoids guidance questions"
+                  << std::endl;
+    }
+
+    void testAutomationExecutorRequiresApproval()
+    {
+        AutomationExecutor executor;
+        auto launcher = std::make_unique<MockApplicationLauncher>();
+        launcher->available.insert(QStringLiteral("code"), makeApp(QStringLiteral("code"),
+                                                                   QStringLiteral("Code")));
+        executor.setApplicationLauncherForTesting(std::move(launcher));
+
+        AutomationAction action = makeAutomationAction(QStringLiteral("action_1"),
+                                                       AutomationActionType::LaunchApplication);
+        action.application = QStringLiteral("code");
+        AutomationPlan plan = makeAutomationPlan(QStringLiteral("plan-approval"), {action});
+
+        QSignalSpy errorSpy(&executor, &AutomationExecutor::workflowError);
+        QVERIFY(!executor.execute(plan, QString(), false));
+        QVERIFY(!executor.execute(plan, QStringLiteral("wrong"), true));
+        QCOMPARE(errorSpy.count(), 2);
+        QVERIFY(!executor.isRunning());
+
+        QSignalSpy finishedSpy(&executor, &AutomationExecutor::workflowFinished);
+        QVERIFY(executor.execute(plan, plan.fingerprint, true));
+        QCOMPARE(finishedSpy.count(), 0);
+        QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 1, 3000);
+        const AutomationWorkflowResult result =
+            finishedSpy.takeFirst().at(0).value<AutomationWorkflowResult>();
+        QCOMPARE(result.status, AutomationWorkflowStatus::Completed);
+        std::cout << "[PASS] Automation executor requires explicit matching approval" << std::endl;
+    }
+
+    void testAutomationExecutorLaunchAndFocus()
+    {
+        AutomationExecutor executor;
+        auto launcher = std::make_unique<MockApplicationLauncher>();
+        auto *launcherPtr = launcher.get();
+        launcher->available.insert(QStringLiteral("code"),
+                                   makeApp(QStringLiteral("code"), QStringLiteral("Code")));
+        executor.setApplicationLauncherForTesting(std::move(launcher));
+
+        auto manager = std::make_unique<MockWindowManager>();
+        auto *managerPtr = manager.get();
+        manager->windows.append(makeWindow(QStringLiteral("0xabc"), QStringLiteral("code"),
+                                           QStringLiteral("project - Code")));
+        executor.setWindowManagerForTesting(std::move(manager));
+
+        AutomationAction launch = makeAutomationAction(QStringLiteral("action_1"),
+                                                       AutomationActionType::LaunchApplication);
+        launch.application = QStringLiteral("code");
+        AutomationAction focus = makeAutomationAction(QStringLiteral("action_2"),
+                                                      AutomationActionType::FocusWindow);
+        focus.application = QStringLiteral("code");
+        AutomationPlan plan = makeAutomationPlan(QStringLiteral("plan-launch-focus"),
+                                                 {launch, focus});
+
+        QSignalSpy finishedSpy(&executor, &AutomationExecutor::workflowFinished);
+        QVERIFY(executor.execute(plan, plan.fingerprint, true));
+        QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 1, 3000);
+
+        QVERIFY(launcherPtr->launched.contains(QStringLiteral("Code")));
+        QCOMPARE(managerPtr->lastFocusedId, QStringLiteral("0xabc"));
+        const AutomationWorkflowResult result =
+            finishedSpy.takeFirst().at(0).value<AutomationWorkflowResult>();
+        QCOMPARE(result.status, AutomationWorkflowStatus::Completed);
+        QCOMPARE(result.results[1].status, AutomationActionStatus::Completed);
+        std::cout << "[PASS] Automation executor launches and focuses applications via mocks"
+                  << std::endl;
+    }
+
+    void testAutomationExecutorMovePlacement()
+    {
+        AutomationExecutor executor;
+        auto launcher = std::make_unique<MockApplicationLauncher>();
+        launcher->available.insert(QStringLiteral("code"),
+                                   makeApp(QStringLiteral("code"), QStringLiteral("Code")));
+        executor.setApplicationLauncherForTesting(std::move(launcher));
+
+        auto manager = std::make_unique<MockWindowManager>();
+        auto *managerPtr = manager.get();
+        manager->screen = QRect(0, 0, 1920, 1080);
+        manager->windows.append(makeWindow(QStringLiteral("0xabc"), QStringLiteral("code")));
+        executor.setWindowManagerForTesting(std::move(manager));
+
+        AutomationAction move = makeAutomationAction(QStringLiteral("action_1"),
+                                                     AutomationActionType::MoveWindow);
+        move.application = QStringLiteral("code");
+        move.placement = QStringLiteral("right");
+        AutomationPlan plan = makeAutomationPlan(QStringLiteral("plan-move"), {move});
+
+        QSignalSpy finishedSpy(&executor, &AutomationExecutor::workflowFinished);
+        QVERIFY(executor.execute(plan, plan.fingerprint, true));
+        QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 1, 3000);
+
+        QVERIFY(managerPtr->moved);
+        QCOMPARE(managerPtr->lastMove, QRect(960, 0, 960, 1080));
+        std::cout << "[PASS] Automation executor computes right-side placement" << std::endl;
+    }
+
+    void testAutomationExecutorRequiredFailureStopsRemaining()
+    {
+        QTemporaryDir tempDir;
+        QVERIFY(tempDir.isValid());
+
+        AutomationExecutor executor;
+        executor.setProjectDirectory(tempDir.path());
+        auto launcher = std::make_unique<MockApplicationLauncher>();
+        executor.setApplicationLauncherForTesting(std::move(launcher));
+
+        AutomationAction missing = makeAutomationAction(QStringLiteral("action_1"),
+                                                        AutomationActionType::LaunchApplication);
+        missing.application = QStringLiteral("missing-app");
+        AutomationAction openDir = makeAutomationAction(QStringLiteral("action_2"),
+                                                        AutomationActionType::OpenDirectory);
+        openDir.path = tempDir.path();
+        AutomationPlan plan = makeAutomationPlan(QStringLiteral("plan-fail"), {missing, openDir});
+
+        QSignalSpy finishedSpy(&executor, &AutomationExecutor::workflowFinished);
+        QVERIFY(executor.execute(plan, plan.fingerprint, true));
+        QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 1, 3000);
+
+        const AutomationWorkflowResult result =
+            finishedSpy.takeFirst().at(0).value<AutomationWorkflowResult>();
+        QCOMPARE(result.status, AutomationWorkflowStatus::Failed);
+        QCOMPARE(result.results[0].status, AutomationActionStatus::Failed);
+        QCOMPARE(result.results[1].status, AutomationActionStatus::Skipped);
+        std::cout << "[PASS] Automation required failure stops and skips remaining actions"
+                  << std::endl;
+    }
+
+    void testAutomationExecutorSkipsUnsupportedAction()
+    {
+        AutomationExecutor executor;
+        auto launcher = std::make_unique<MockApplicationLauncher>();
+        auto *launcherPtr = launcher.get();
+        launcher->available.insert(QStringLiteral("code"),
+                                   makeApp(QStringLiteral("code"), QStringLiteral("Code")));
+        executor.setApplicationLauncherForTesting(std::move(launcher));
+
+        AutomationAction unsupported = makeAutomationAction(
+            QStringLiteral("action_1"), AutomationActionType::ListWindows);
+        unsupported.supported = false;
+        unsupported.unsupportedReason = QStringLiteral("No window backend.");
+        AutomationAction launch = makeAutomationAction(QStringLiteral("action_2"),
+                                                       AutomationActionType::LaunchApplication);
+        launch.application = QStringLiteral("code");
+        AutomationPlan plan = makeAutomationPlan(QStringLiteral("plan-unsupported"),
+                                                 {unsupported, launch});
+
+        QSignalSpy finishedSpy(&executor, &AutomationExecutor::workflowFinished);
+        QVERIFY(executor.execute(plan, plan.fingerprint, true));
+        QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 1, 3000);
+
+        QCOMPARE(launcherPtr->launched.size(), 1);
+        const AutomationWorkflowResult result =
+            finishedSpy.takeFirst().at(0).value<AutomationWorkflowResult>();
+        QCOMPARE(result.status, AutomationWorkflowStatus::Completed);
+        QCOMPARE(result.results[0].status, AutomationActionStatus::Unsupported);
+        QCOMPARE(result.results[1].status, AutomationActionStatus::Completed);
+        std::cout << "[PASS] Automation executor skips unsupported actions and continues"
+                  << std::endl;
+    }
+
+    void testAutomationExecutorWaitTimeout()
+    {
+        AutomationExecutor executor;
+        auto manager = std::make_unique<MockWindowManager>();
+        executor.setWindowManagerForTesting(std::move(manager));
+
+        AutomationAction wait = makeAutomationAction(QStringLiteral("action_1"),
+                                                     AutomationActionType::WaitForWindow);
+        wait.application = QStringLiteral("ghost");
+        wait.timeoutMs = 150;
+        AutomationPlan plan = makeAutomationPlan(QStringLiteral("plan-wait-timeout"), {wait});
+
+        QSignalSpy finishedSpy(&executor, &AutomationExecutor::workflowFinished);
+        QVERIFY(executor.execute(plan, plan.fingerprint, true));
+        QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 1, 3000);
+
+        const AutomationWorkflowResult result =
+            finishedSpy.takeFirst().at(0).value<AutomationWorkflowResult>();
+        QCOMPARE(result.status, AutomationWorkflowStatus::Failed);
+        QVERIFY(result.results[0].message.contains(QStringLiteral("Timed out")));
+        std::cout << "[PASS] Automation wait_for_window times out cleanly" << std::endl;
+    }
+
+    void testAutomationExecutorCancel()
+    {
+        AutomationExecutor executor;
+        auto manager = std::make_unique<MockWindowManager>();
+        executor.setWindowManagerForTesting(std::move(manager));
+
+        AutomationAction wait = makeAutomationAction(QStringLiteral("action_1"),
+                                                     AutomationActionType::WaitForWindow);
+        wait.application = QStringLiteral("ghost");
+        wait.timeoutMs = 5000;
+        AutomationAction launch = makeAutomationAction(QStringLiteral("action_2"),
+                                                       AutomationActionType::LaunchApplication);
+        launch.application = QStringLiteral("code");
+        AutomationPlan plan = makeAutomationPlan(QStringLiteral("plan-cancel"), {wait, launch});
+
+        QSignalSpy startedSpy(&executor, &AutomationExecutor::actionStarted);
+        QSignalSpy finishedSpy(&executor, &AutomationExecutor::workflowFinished);
+        QVERIFY(executor.execute(plan, plan.fingerprint, true));
+        QTRY_COMPARE_WITH_TIMEOUT(startedSpy.count(), 1, 3000);
+        QTimer::singleShot(50, &executor, [&executor]() { executor.cancel(); });
+        QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 1, 3000);
+
+        const AutomationWorkflowResult result =
+            finishedSpy.takeFirst().at(0).value<AutomationWorkflowResult>();
+        QCOMPARE(result.status, AutomationWorkflowStatus::Cancelled);
+        QCOMPARE(result.results[0].status, AutomationActionStatus::Cancelled);
+        QCOMPARE(result.results[1].status, AutomationActionStatus::Skipped);
+        std::cout << "[PASS] Automation cancel stops waiting and skips remaining actions"
+                  << std::endl;
+    }
+
+    void testAutomationHistoryPersistence()
+    {
+        QTemporaryDir tempDir;
+        QVERIFY(tempDir.isValid());
+
+        AutomationHistoryManager manager;
+        manager.setStorageDirectory(tempDir.path());
+        manager.clear();
+
+        AutomationAction action = makeAutomationAction(QStringLiteral("action_1"),
+                                                       AutomationActionType::LaunchApplication);
+        action.application = QStringLiteral("code");
+        AutomationPlan plan = makeAutomationPlan(QStringLiteral("workflow-1"), {action});
+
+        AutomationHistoryEntry entry;
+        entry.workflowId = plan.id;
+        entry.request = QStringLiteral("Open code");
+        entry.taskName = plan.taskName;
+        entry.plan = plan;
+        entry.status = AutomationWorkflowStatus::Running;
+        entry.startedAt = QDateTime::currentDateTime();
+        AutomationActionResult result;
+        result.actionId = action.id;
+        result.status = AutomationActionStatus::Completed;
+        result.output = QStringLiteral("secret terminal output");
+        entry.results.append(result);
+
+        QCOMPARE(manager.addEntry(entry), QStringLiteral("workflow-1"));
+        QCOMPARE(manager.count(), 1);
+
+        AutomationHistoryManager reloaded;
+        reloaded.setStorageDirectory(tempDir.path());
+        QCOMPARE(reloaded.count(), 1);
+        QVERIFY(reloaded.allEntries().first().results.first().output.isEmpty());
+
+        AutomationWorkflowResult workflow;
+        workflow.workflowId = plan.id;
+        workflow.plan = plan;
+        workflow.status = AutomationWorkflowStatus::Completed;
+        workflow.results = {result};
+        workflow.startedAt = entry.startedAt;
+        workflow.finishedAt = QDateTime::currentDateTime();
+        QVERIFY(reloaded.updateEntry(workflow));
+        QCOMPARE(reloaded.allEntries().first().status, AutomationWorkflowStatus::Completed);
+        QVERIFY(reloaded.allEntries().first().results.first().output.isEmpty());
+
+        reloaded.clear();
+        QCOMPARE(reloaded.count(), 0);
+        std::cout << "[PASS] Automation history persists metadata and strips output" << std::endl;
+    }
+
+    void testAutomationApplicationLauncherSafety()
+    {
+        QTemporaryDir tempDir;
+        QVERIFY(tempDir.isValid());
+        {
+            QFile safe(tempDir.filePath(QStringLiteral("safe.desktop")));
+            QVERIFY(safe.open(QIODevice::WriteOnly | QIODevice::Text));
+            safe.write("[Desktop Entry]\nType=Application\nName=Safe Lister\n"
+                       "Exec=ls -la %F\nTerminal=false\n");
+        }
+        {
+            QFile shell(tempDir.filePath(QStringLiteral("shell.desktop")));
+            QVERIFY(shell.open(QIODevice::WriteOnly | QIODevice::Text));
+            shell.write("[Desktop Entry]\nType=Application\nName=Shell App\n"
+                        "Exec=bash -c touch /tmp/nope\nTerminal=false\n");
+        }
+        {
+            QFile redirect(tempDir.filePath(QStringLiteral("redirect.desktop")));
+            QVERIFY(redirect.open(QIODevice::WriteOnly | QIODevice::Text));
+            redirect.write("[Desktop Entry]\nType=Application\nName=Redirect App\n"
+                           "Exec=ls > /tmp/nope\nTerminal=false\n");
+        }
+
+        const QList<ApplicationInfo> apps =
+            ApplicationLauncher::parseDesktopDirectory(tempDir.path());
+        QCOMPARE(apps.size(), 1);
+        QCOMPARE(apps.first().name, QStringLiteral("Safe Lister"));
+        QCOMPARE(apps.first().baseArguments, QStringList({QStringLiteral("-la")}));
+
+        ApplicationLauncher launcher;
+        launcher.setSearchPathsForTesting({tempDir.path()});
+        QVERIFY(launcher.isInstalled(QStringLiteral("Safe Lister")));
+        QVERIFY(!launcher.isInstalled(QStringLiteral("Shell App")));
+        std::cout << "[PASS] Application launcher rejects shell and redirection Exec entries"
+                  << std::endl;
+    }
+
+    void testAutomationWindowManagerUnsupportedGraceful()
+    {
+        DesktopEnvironmentInfo environment;
+        environment.windowBackend = QStringLiteral("unsupported");
+        environment.windowManagementSupported = false;
+        environment.unsupportedReason = QStringLiteral("No supported compositor tools.");
+
+        auto manager = createWindowManager(environment);
+        QVERIFY(manager != nullptr);
+        QVERIFY(!manager->isSupported());
+        QVERIFY(!manager->unsupportedReason().isEmpty());
+        QString error;
+        QVERIFY(manager->listWindows(&error).isEmpty());
+        QVERIFY(!error.isEmpty());
+        QVERIFY(!manager->focusWindow(QStringLiteral("0x1"), &error));
+        QVERIFY(!manager->moveWindow(QStringLiteral("0x1"), QRect(0, 0, 10, 10), &error));
+        QVERIFY(!manager->resizeWindow(QStringLiteral("0x1"), QSize(10, 10), &error));
+        std::cout << "[PASS] Unsupported window backends fail gracefully with clear reasons"
+                  << std::endl;
+    }
+
+    void testAutomationExecutorRejectsUnsafePlan()
+    {
+        AutomationExecutor executor;
+        AutomationAction open = makeAutomationAction(QStringLiteral("action_1"),
+                                                     AutomationActionType::OpenFile);
+        open.path = QStringLiteral("/etc/passwd");
+        AutomationPlan plan = makeAutomationPlan(QStringLiteral("plan-unsafe"), {open});
+
+        QSignalSpy errorSpy(&executor, &AutomationExecutor::workflowError);
+        QVERIFY(!executor.execute(plan, plan.fingerprint, true));
+        QCOMPARE(errorSpy.count(), 1);
+        QVERIFY(!executor.isRunning());
+        std::cout << "[PASS] Automation executor re-validates and rejects unsafe plans"
+                  << std::endl;
     }
 
     void testMeetingRecorderSttAvailability() {

@@ -67,7 +67,16 @@ add_executable(TitanAI
     src/terminal/terminal_executor.cpp
     src/terminal/terminal_assistant.cpp
     src/terminal/terminal_history_manager.cpp
+    src/automation/automation_types.cpp
+    src/automation/desktop_environment_detector.cpp
+    src/automation/application_launcher.cpp
+    src/automation/automation_policy.cpp
+    src/automation/window_manager.cpp
+    src/automation/automation_planner.cpp
+    src/automation/automation_executor.cpp
+    src/automation/automation_history_manager.cpp
     src/gui/terminal_page.cpp
+    src/gui/desktop_automation_page.cpp
 )
 
 # Enable compiler warnings
@@ -140,6 +149,14 @@ add_executable(titanai_tests
     src/terminal/terminal_executor.cpp
     src/terminal/terminal_assistant.cpp
     src/terminal/terminal_history_manager.cpp
+    src/automation/automation_types.cpp
+    src/automation/desktop_environment_detector.cpp
+    src/automation/application_launcher.cpp
+    src/automation/automation_policy.cpp
+    src/automation/window_manager.cpp
+    src/automation/automation_planner.cpp
+    src/automation/automation_executor.cpp
+    src/automation/automation_history_manager.cpp
 )
 
 target_compile_features(titanai_tests PRIVATE cxx_std_20)

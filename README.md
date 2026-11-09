@@ -242,7 +242,9 @@ The initial release is deliberately conservative:
 
 - **Executable allowlist** — only a small set of read-only and low-impact programs
   (`free`, `df`, `du`, `ls`, `ps`, `find`, `stat`, `mkdir`, `touch`, `cp`, `mv`, `ln`, …)
-  can execute. Unknown programs are blocked.
+  can execute. Read-only `git` subcommands (`status`, `log`, `diff`, `branch`, `show`,
+  `rev-parse`) are also allowed, while global options, destructive branch operations and
+  protected filenames are blocked. Unknown programs are blocked.
 - **No shell** — commands use `QProcess` with a program and literal argument list. `sh -c`,
   `bash -c`, pipes, redirection, command substitution, `;`, `&&`, globs passed to a shell
   and other compound syntax are rejected.
@@ -278,6 +280,92 @@ The automated suite covers proposal parsing, invalid model JSON, allowlisting, r
 classification, injection/substitution attempts, privilege escalation, path boundaries,
 approval enforcement, cancellation, timeouts, output capture, history persistence and
 untrusted-output sanitization:
+
+```bash
+./build/titanai_tests
+```
+
+## Desktop Automation Agent
+
+TitanAI includes a local-first **Desktop Automation Agent**. Describe a desktop task in
+natural language and TitanAI builds a structured plan, validates it, and waits for your
+explicit approval before touching any application or window.
+
+Open **Desktop Automation** from the sidebar (window-layout icon), or ask in chat:
+
+- *"Open VS Code on the left and the browser on the right."*
+- *"Arrange the windows side by side."*
+- *"Move the terminal to the right side of the screen."*
+- *"What windows are currently open?"*
+- *"Focus the browser window."*
+- *"Open my project folder."*
+- *"Show git status in my project."*
+
+### How it works
+
+1. **Describe the task** and click **Generate Plan**.
+2. The local Ollama model returns a strict JSON plan. The model output is untrusted.
+3. TitanAI parses the plan, checks installed applications and desktop capabilities, and
+   marks unavailable steps as **Unsupported** with a clear reason.
+4. `AutomationPolicy` validates every action: allowed action types only, safe parameters,
+   authorized paths, duplicate/action limits, and read-only terminal commands.
+5. The plan, permissions, warnings and per-step status are shown in the page. The plan is
+   fingerprinted with SHA-256.
+6. **Nothing runs automatically.** Click **Approve & Execute** and confirm. Execution is
+   bound to the fingerprint you approved and the plan is re-validated immediately before
+   running.
+7. Steps run asynchronously in order. A required failure stops the workflow and marks the
+   remaining steps **Skipped**. **Stop Automation** cancels a running workflow.
+8. **Retry Failed Step** requires a fresh confirmation. History entries can be reopened
+   for review and a new approval, but never re-execute without one.
+
+### Supported desktops
+
+- **Hyprland (Wayland)** — full window management through `hyprctl`: list, focus, move,
+  resize, active window, screen geometry, and wait-for-window. Modern Hyprland releases
+  (0.56+, Lua dispatchers) are supported, with a fallback to the legacy dispatcher syntax
+  for older versions.
+- **X11** — window management through `wmctrl` when it is installed (`xprop` is used for
+  the active window). If `wmctrl` is missing, window actions are reported as unsupported.
+- **Other compositors** — application launch, directory/file open and terminal actions
+  still work; window actions fail gracefully with an explanation. No unsafe fallback is
+  attempted.
+
+Application launching uses only system-trusted `.desktop` directories and never invokes a
+shell. Shell/interpreter entries and entries containing shell syntax are rejected.
+
+### Security model
+
+- **Explicit approval only** — generation never launches, moves or executes anything.
+  Approval is bound to the immutable plan fingerprint.
+- **Allowlisted action types** — launch, focus, list, move, resize, open directory/file,
+  get active window, wait for window and approved terminal commands.
+- **No arbitrary shell** — application launches use tokenized `.desktop` `Exec` entries
+  with `QProcess`; terminal steps reuse the AI Terminal's shell-free executor.
+- **Low-risk terminal only** — automation terminal steps must pass `CommandSafetyValidator`
+  at low risk. `sudo`, destructive commands, shell operators and protected paths are
+  blocked.
+- **Path boundaries** — file actions are limited to the project directory, home directory
+  and `/tmp`; traversal, symlink escapes and protected paths are rejected.
+- **Limits** — at most 12 actions per plan and at most 2 identical action signatures, to
+  prevent runaway loops.
+- **No invented window ids** — the planner is instructed to use application names;
+  window ids are resolved locally at execution time.
+
+### Local history
+
+Automation metadata (request, task, plan, per-step status and short messages) is stored at
+`~/.local/share/TitanAI/TitanAI/automation/history.json` with owner-only permissions.
+Raw terminal output is deliberately **not** persisted. History is capped at 100 entries and
+can be cleared from the page.
+
+### Tests
+
+The suite includes 18 desktop-automation tests covering JSON plan parsing, malformed and
+unknown actions, intent detection, path/traversal/protected-path policy, restricted git
+commands, approval and fingerprint enforcement, mocked launch/focus/move execution,
+unsupported-step skipping, required-failure stopping, wait timeout, cancellation, history
+sanitization/persistence, `.desktop` safety and graceful unsupported window backends:
 
 ```bash
 ./build/titanai_tests
