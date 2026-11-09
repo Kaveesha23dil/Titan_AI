@@ -23,9 +23,10 @@ class QCheckBox;
  class QSlider;
  class QSpinBox;
  class QStackedWidget;
- class QTextBrowser;
- class QVBoxLayout;
- class QWidget;
+class QTextBrowser;
+class QVBoxLayout;
+class QWidget;
+class TerminalPage;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -172,7 +173,10 @@ private:
 
 
     // --- Chat History ---
-    QPushButton   *m_navHistory{nullptr};  ///< Sidebar history button (🕐)
+    QPushButton *m_navHistory{nullptr};  ///< Sidebar history button (🕐)
+    // --- AI Terminal ---
+    QPushButton *m_navTerminal{nullptr}; ///< Sidebar AI Terminal button
+    TerminalPage *m_terminalPage{nullptr}; ///< Dedicated terminal assistant page
     // --- Translation ---
     QPushButton   *m_navTranslate{nullptr}; ///< Sidebar translation button (🌐)
     // --- Meeting Notes ---

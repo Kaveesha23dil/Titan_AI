@@ -1,4 +1,6 @@
 #include "gui/main_window.hpp"
+
+#include "gui/terminal_page.hpp"
 #include "gui/camera_dialog.hpp"
 #include "gui/model_dialog.hpp"
 #include "gui/voice_settings_dialog.hpp"
@@ -206,6 +208,13 @@ QIcon MainWindow::createVectorIcon(const QString &name, int size)
         };
         arrowHead(180.0);   // end of first arc
         arrowHead(360.0);   // end of second arc
+    } else if (name == QLatin1String("terminal")) {
+        // Terminal window with a prompt chevron and cursor
+        QRectF r(m, m, s - 2 * m, s - 2 * m);
+        p.drawRoundedRect(r, 3, 3);
+        p.drawLine(QPointF(s * 0.30, s * 0.38), QPointF(s * 0.44, s * 0.50));
+        p.drawLine(QPointF(s * 0.44, s * 0.50), QPointF(s * 0.30, s * 0.62));
+        p.drawLine(QPointF(s * 0.52, s * 0.64), QPointF(s * 0.72, s * 0.64));
     } else if (name == QLatin1String("history")) {
         // Clock / history icon: circle with clock hands
         QRectF circle(m, m, s - 2 * m, s - 2 * m);
@@ -429,6 +438,7 @@ QWidget *MainWindow::createSidebar()
     m_navTranslate = makeNavBtn(QStringLiteral("translate"), QStringLiteral("Translation Assistant (Ctrl+Alt+T)"));
     m_navMeeting = makeNavBtn(QStringLiteral("meeting"),   QStringLiteral("Meeting Notes – Record & Summarize (Ctrl+M)"));
     m_navKnowledge = makeNavBtn(QStringLiteral("knowledge"), QStringLiteral("Local Knowledge Base (RAG)"));
+    m_navTerminal = makeNavBtn(QStringLiteral("terminal"), QStringLiteral("AI Terminal – Natural Language Linux Commands"));
 
     m_navHome->setChecked(true);
 
@@ -450,7 +460,8 @@ QWidget *MainWindow::createSidebar()
     connect(m_navTranslate, &QPushButton::clicked, this, &MainWindow::onOpenTranslationAssistant);
     connect(m_navMeeting, &QPushButton::clicked, this, &MainWindow::onOpenMeetingNotes);
     connect(m_navKnowledge, &QPushButton::clicked, this, &MainWindow::onOpenKnowledgeBase);
-    connect(m_navSettings, &QPushButton::clicked, this, [this]() { navigateTo(3); });
+    connect(m_navTerminal, &QPushButton::clicked, this, [this]() { navigateTo(3); });
+    connect(m_navSettings, &QPushButton::clicked, this, [this]() { navigateTo(4); });
 
     return sidebar;
 }
@@ -1700,7 +1711,7 @@ void MainWindow::navigateTo(int pageIndex)
     }
 
     // Uncheck old nav button
-    QList<QPushButton *> navBtns = {m_navHome, m_navChat, m_navDev};
+    QList<QPushButton *> navBtns = {m_navHome, m_navChat, m_navDev, m_navTerminal};
     for (int i = 0; i < navBtns.size(); ++i) {
         const QSignalBlocker blocker(navBtns[i]);
         navBtns[i]->setChecked(i == pageIndex);
@@ -1766,7 +1777,12 @@ MainWindow::MainWindow(QWidget *parent)
     m_pageStack->addWidget(createWelcomePage());   // 0
     m_pageStack->addWidget(createChatPage());       // 1
     m_pageStack->addWidget(createDevHubPage());     // 2
-    m_pageStack->addWidget(createSettingsPage());   // 3
+    m_terminalPage = new TerminalPage(&m_agent.terminalAssistant(),
+                                      &m_agent.terminalExecutor(),
+                                      &m_agent.terminalHistoryManager(),
+                                      this);
+    m_pageStack->addWidget(m_terminalPage);         // 3
+    m_pageStack->addWidget(createSettingsPage());   // 4
     mainHLayout->addWidget(m_pageStack, 1);
 
     setCentralWidget(central);
@@ -1799,6 +1815,13 @@ MainWindow::MainWindow(QWidget *parent)
     connect(&m_agent, &Agent::modelReady, this, &MainWindow::onModelReady);
     connect(&m_agent, &Agent::modelError, this, &MainWindow::onModelError);
     connect(&m_agent, &Agent::modelsChanged, this, &MainWindow::onModelsChanged);
+    connect(&m_agent, &Agent::terminalProposalReady, this,
+            [this](const TerminalCommandProposal &proposal, const QString &request) {
+                if (m_terminalPage) {
+                    m_terminalPage->setPendingProposal(proposal, request);
+                    navigateTo(3);
+                }
+            });
 
     // Restore settings
     m_projectDirectory = m_settings.value(QStringLiteral("projectDir")).toString();

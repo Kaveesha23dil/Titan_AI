@@ -24,6 +24,9 @@
 #include "calendar/notification_manager.hpp"
 #include "power/power_manager.hpp"
 #include "agent/chat_history_manager.hpp"
+#include "terminal/terminal_assistant.hpp"
+#include "terminal/terminal_executor.hpp"
+#include "terminal/terminal_history_manager.hpp"
 
 class Agent : public QObject {
     Q_OBJECT
@@ -69,6 +72,11 @@ public:
 
     // Web Search
     [[nodiscard]] WebSearch &webSearch();
+
+    // AI Terminal
+    [[nodiscard]] TerminalAssistant &terminalAssistant();
+    [[nodiscard]] TerminalExecutor &terminalExecutor();
+    [[nodiscard]] TerminalHistoryManager &terminalHistoryManager();
 
     // Local Retrieval-Augmented Generation
     [[nodiscard]] RagManager &ragManager();
@@ -131,6 +139,10 @@ signals:
     void webSearchFinished(const QString &groundedAnswer);
     void webSearchError(const QString &error);
 
+    // AI Terminal signals
+    void terminalProposalReady(const TerminalCommandProposal &proposal,
+                               const QString &request);
+
     // Local RAG signals
     void ragContextUsed(const QStringList &sources);
 
@@ -142,6 +154,8 @@ private slots:
     void onCompletionError(const QString &error);
     void onWebSearchFinished(const QList<WebSearchResult> &results);
     void onWebSearchError(const QString &error);
+    void onTerminalProposalReady(const TerminalCommandProposal &proposal);
+    void onTerminalGenerationFailed(const QString &error);
 
 private:
     bool handleWebSearchQuery(const QString &message);
@@ -158,6 +172,7 @@ private:
     bool handlePowerQuery(const QString &message);
     bool handleChatHistoryQuery(const QString &message);
     bool handleTranslationQuery(const QString &message);
+    bool handleTerminalQuery(const QString &message);
     bool handleRagQuery(const QString &message);
     void startRagGroundedAnswer(const QString &message, const QString &query);
     void startPasteFix(const QString &message);
@@ -189,7 +204,12 @@ private:
     ChatHistoryManager m_chatHistoryManager;
     TranslationAssistant m_translationAssistant;
     WebSearch m_webSearch;
+    TerminalAssistant m_terminalAssistant;
+    TerminalExecutor m_terminalExecutor;
+    TerminalHistoryManager m_terminalHistoryManager;
     RagManager m_ragManager;
+    bool m_terminalChatGeneration{false};
+    QString m_terminalPendingRequest;
     bool m_ragAutoGround{true};
     bool m_ragQueryInFlight{false};
     bool m_codeDevelopmentEnabled{false};
